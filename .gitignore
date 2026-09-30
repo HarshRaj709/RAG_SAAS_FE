@@ -1,0 +1,41 @@
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editors / IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Node (if tooling is ever added — no build step required)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+yarn.lock
+
+# Env / secrets — never commit tokens, keys, or local overrides
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+logs/
+
+# Build / dist output
+dist/
+build/
+out/
+
+# Python static-server cache / misc
+__pycache__/
+*.py[cod]
+
+# Temp
+*.tmp
+*.bak

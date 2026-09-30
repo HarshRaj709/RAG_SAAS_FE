@@ -1,0 +1,28 @@
+/* Design tokens — light/dark via [data-theme] */
+:root{
+  --font-sans:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  --font-mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  --primary:#6366f1; --primary-2:#8b5cf6;
+  --grad:linear-gradient(135deg,#6366f1,#8b5cf6);
+  --bg:#f8fafc; --surface:#ffffff; --surface-2:#f1f5f9;
+  --text:#0f172a; --muted:#64748b; --border:#e2e8f0;
+  --success:#16a34a; --warning:#d97706; --danger:#dc2626; --info:#0284c7;
+  --success-bg:#dcfce7; --warning-bg:#fef3c7; --danger-bg:#fee2e2; --info-bg:#e0f2fe;
+  --radius-s:8px; --radius-m:12px; --radius-l:16px;
+  --shadow-sm:0 1px 2px rgba(15,23,42,.06);
+  --shadow-md:0 4px 16px rgba(15,23,42,.08);
+  --shadow-lg:0 12px 40px rgba(15,23,42,.14);
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:32px; --s7:48px;
+  --sidebar-w:264px; --topbar-h:64px;
+  --trans:180ms ease;
+  --focus:0 0 0 3px rgba(99,102,241,.35);
+}
+[data-theme="dark"]{
+  --bg:#0b1020; --surface:#111827; --surface-2:#1a2340;
+  --text:#e5e9f5; --muted:#94a3b8; --border:rgba(255,255,255,.09);
+  --success-bg:rgba(22,163,74,.18); --warning-bg:rgba(217,119,6,.18);
+  --danger-bg:rgba(220,38,38,.2); --info-bg:rgba(2,132,199,.2);
+  --shadow-sm:0 1px 2px rgba(0,0,0,.4);
+  --shadow-md:0 4px 16px rgba(0,0,0,.45);
+  --shadow-lg:0 12px 40px rgba(0,0,0,.55);
+}

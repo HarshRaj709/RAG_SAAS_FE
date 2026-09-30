@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RAG SaaS — Turn your documents into an intelligent chatbot</title>
+<meta name="description" content="Upload docs, build knowledge bases, launch secure chatbots with one API key.">
+<meta property="og:title" content="RAG SaaS — Docs to Chatbot"><meta property="og:description" content="Multi-tenant RAG platform with orgs, RBAC, and secure bot API keys.">
+<link rel="icon" href="assets/logo.svg">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' http://localhost:8000 http://127.0.0.1:8000; img-src 'self' data:;">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/tokens.css"><link rel="stylesheet" href="css/base.css"><link rel="stylesheet" href="css/components.css"><link rel="stylesheet" href="css/layout.css"><link rel="stylesheet" href="css/pages.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<nav class="landing-nav"><div class="container">
+  <a href="index.html" class="flex" style="font-weight:800;text-decoration:none;color:var(--text)"><img src="assets/logo.svg" width="30" height="30" alt="RAG SaaS logo"> RAG SaaS</a>
+  <div class="links"><a href="#features">Features</a><a href="#how">How it works</a><a href="#security">Security</a><a href="#api">API</a><a href="#faq">FAQ</a></div>
+  <div style="flex:1"></div>
+  <button class="icon-btn" id="theme-btn" aria-label="Toggle theme">🌙</button>
+  <a href="login.html" class="btn btn-ghost btn-sm">Log in</a>
+  <a href="signup.html" class="btn btn-primary btn-sm">Get started</a>
+</div></nav>
+<main id="main">
+<header class="hero container">
+  <span class="badge b-admin pill">✨ Multi-tenant RAG platform</span>
+  <h1>Turn your documents into<br><span>an intelligent chatbot</span></h1>
+  <p class="sub">Upload PDFs, DOCX, Markdown and text. Organize them into knowledge bases, launch bots, and embed grounded answers in your product with one secure API key.</p>
+  <div class="flex center"><a href="signup.html" class="btn btn-primary btn-lg">Start free</a><a href="https://documenter.getpostman.com/view/41362344/2sBXqKofTd" target="_blank" rel="noopener" class="btn btn-secondary btn-lg">View API docs</a></div>
+  <div class="mock-chat card" aria-hidden="true">
+    <div class="mock-head"><span style="color:#22c55e">●</span><span style="color:#eab308">●</span><span style="color:#ef4444">●</span> Support Bot · grounded in 4 docs</div>
+    <div style="padding:18px;display:flex;flex-direction:column;gap:12px" id="mock-body">
+      <div class="chat-bubble chat-user">What is your refund policy?</div>
+      <div class="chat-bubble chat-assistant">Refunds are available within <strong>30 days</strong> of purchase with a receipt. <span class="muted">Sources: policy.pdf</span></div>
+    </div>
+  </div>
+</header>
+<section class="section container" id="how"><h2>How it works</h2><p class="lede">From raw files to a production chatbot in four steps.</p>
+  <div class="steps">
+    <div class="card"><h3>1. Upload</h3><p class="muted small">Drop PDFs, DOCX, MD or TXT files. We validate type and size in the browser.</p></div>
+    <div class="card"><h3>2. Process</h3><p class="muted small">Recursive text splitting, embeddings and Qdrant indexing — watch live status.</p></div>
+    <div class="card"><h3>3. Create bot</h3><p class="muted small">Link one or more knowledge bases, get a slug and a one-time API key.</p></div>
+    <div class="card"><h3>4. Integrate</h3><p class="muted small">POST answers with session memory of the last 10 messages.</p></div>
+  </div></section>
+<section class="section container" id="features"><h2>Everything you need</h2><p class="lede">Built for teams shipping AI support, docs search and in-app assistants.</p>
+  <div class="feature-grid">
+    <div class="card"><h4>🏢 Multi-tenant orgs</h4><p class="small muted">Belong to many orgs, switch context instantly.</p></div>
+    <div class="card"><h4>🔐 RBAC</h4><p class="small muted">Owner / Admin / Member with UI + server enforcement.</p></div>
+    <div class="card"><h4>📚 Multiple KBs</h4><p class="small muted">Group docs per product, locale or team.</p></div>
+    <div class="card"><h4>📄 Multi-format docs</h4><p class="small muted">PDF, DOCX, Markdown, TXT with chunk counts.</p></div>
+    <div class="card"><h4>⚡ API-first</h4><p class="small muted">JWT dashboard auth, hashed bot keys for public chat.</p></div>
+    <div class="card"><h4>🛡️ Secure keys</h4><p class="small muted">Raw key shown once, stored as hash only.</p></div>
+    <div class="card"><h4>💬 Session memory</h4><p class="small muted">Last 10 messages remembered per session_id.</p></div>
+    <div class="card"><h4>🎯 Grounded answers</h4><p class="small muted">Citations and sources under every reply.</p></div>
+  </div></section>
+<section class="section container" id="security"><h2>Security by default</h2><p class="lede">Org isolation on every query. Keys hashed. No secrets in localStorage.</p>
+  <div class="grid grid-3">
+    <div class="card"><h4>One-time key reveal</h4><p class="small muted">Copy it once with a required checkbox — lose it and you regenerate.</p></div>
+    <div class="card"><h4>Backend proxying</h4><p class="small muted">Never ship bot keys in public frontend code; proxy through your server.</p></div>
+    <div class="card"><h4>Sanitized rendering</h4><p class="small muted">All LLM markdown passes through DOMPurify before display.</p></div>
+  </div></section>
+<section class="section container" id="api"><h2>Integrate in minutes</h2><p class="lede">One endpoint. Your slug, your key, your session.</p>
+  <div class="card"><div class="tabs" role="tablist"><button class="tab" aria-selected="true" data-snip="curl">cURL</button><button class="tab" aria-selected="false" data-snip="js">JavaScript</button><button class="tab" aria-selected="false" data-snip="py">Python</button></div>
+  <pre class="code-block" id="snip"></pre></div></section>
+<section class="section container" id="faq"><h2>FAQ</h2><p class="lede">Quick answers before you dive in.</p>
+  <details class="faq-item"><summary>What file types are supported?</summary><div class="faq-body">PDF, DOCX, Markdown and TXT. 50 MB per file by default (configurable).</div></details>
+  <details class="faq-item"><summary>What happens if I lose my bot API key?</summary><div class="faq-body">We store only a hash, so it can't be recovered. Regenerate a new key from the bot page.</div></details>
+  <details class="faq-item"><summary>How does session memory work?</summary><div class="faq-body">Pass a UUID <span class="mono">session_id</span> with each chat call; the server remembers the last 10 messages.</div></details>
+  <details class="faq-item"><summary>Can I belong to multiple organizations?</summary><div class="faq-body">Yes — use the org switcher in the topbar. Each org's KBs, bots and members are isolated.</div></details>
+  <div class="center mt3"><a href="signup.html" class="btn btn-primary btn-lg">Get started free</a></div></section>
+</main>
+<footer class="site"><div class="container flex between"><span>© 2026 RAG SaaS · Built for grounded AI support</span><span><a href="https://documenter.getpostman.com/view/41362344/2sBXqKofTd" target="_blank" rel="noopener">API Docs</a> · <a href="login.html">Login</a></span></div></footer>
+<script type="module">
+import { initTheme, getTheme, setTheme } from './js/state.js';
+initTheme();
+const b = document.getElementById('theme-btn');
+b.textContent = getTheme() === 'dark' ? '☀️' : '🌙';
+b.onclick = () => { const n = getTheme() === 'dark' ? 'light' : 'dark'; setTheme(n); b.textContent = n === 'dark' ? '☀️' : '🌙'; };
+const snips = {
+  curl: `POST /api/chat/bot/YOUR-SLUG/chat/ HTTP/1.1\nHost: localhost:8000\nAuthorization: Bearer YOUR_API_KEY\nContent-Type: application/json\n\n{\n  "query": "What is your refund policy?",\n  "session_id": "550e8400-e29b-41d4-a716-446655440000"\n}`,
+  js: `const res = await fetch('http://localhost:8000/api/chat/bot/YOUR-SLUG/chat/', {\n  method: 'POST',\n  headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer YOUR_API_KEY' },\n  body: JSON.stringify({ query: 'What is your refund policy?', session_id: crypto.randomUUID() })\n});\nconst { answer, sources } = await res.json();`,
+  py: `import requests\nr = requests.post(\n  'http://localhost:8000/api/chat/bot/YOUR-SLUG/chat/',\n  headers={'Authorization': 'Bearer YOUR_API_KEY'},\n  json={'query': 'What is your refund policy?', 'session_id': 'uuid-here'}\n)\nprint(r.json()['answer'])`
+};
+const pre = document.getElementById('snip');
+const render = (k) => pre.textContent = snips[k];
+render('curl');
+document.querySelectorAll('[data-snip]').forEach(t => t.onclick = () => { document.querySelectorAll('[data-snip]').forEach(x => x.setAttribute('aria-selected', 'false')); t.setAttribute('aria-selected', 'true'); render(t.dataset.snip); });
+const extra = [['Can I change my plan later?', 'Yes — orgs, KBs and bots migrate cleanly.'], ['Do you offer usage tracking?', 'Per-key usage is coming soon; the dashboard has a placeholder.']];
+const mockBody = document.getElementById('mock-body');
+let i = 0; const convo = [['Do you ship internationally?', 'Yes — we ship to 40+ countries in 3–5 business days.'], ['How do I reset my password?', 'Go to Settings → Security → Change password; the link expires in 1 hour.']];
+if (!matchMedia('(prefers-reduced-motion: reduce)').matches) setInterval(() => { const [q, a] = convo[i++ % convo.length]; mockBody.innerHTML = `<div class="chat-bubble chat-user">${q}</div><div class="chat-bubble chat-assistant">${a}</div>`; }, 5000);
+</script>
+</body></html>

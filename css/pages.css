@@ -1,0 +1,26 @@
+/* Page-specific */
+.check-item{display:flex;gap:12px;align-items:flex-start;padding:12px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px;background:var(--surface)}
+.check-item.done{opacity:.75} .check-item .ck{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;background:var(--surface-2);flex-shrink:0;font-size:13px}
+.check-item.done .ck{background:var(--success);color:#fff}
+.faq-item{border:1px solid var(--border);border-radius:12px;margin-bottom:10px;background:var(--surface);overflow:hidden}
+.faq-item summary{padding:16px 18px;font-weight:700;cursor:pointer;list-style:none}
+.faq-item .faq-body{padding:0 18px 18px;color:var(--muted)}
+.kb-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px}
+.kb-card h3{margin-bottom:4px}
+.upload-row{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);font-size:14px}
+.chat-shell{display:flex;flex-direction:column;height:560px;border:1px solid var(--border);border-radius:var(--radius-l);overflow:hidden;background:var(--surface)}
+.chat-msgs{flex:1;overflow:auto;padding:20px;display:flex;flex-direction:column;gap:14px}
+.chat-input-bar{border-top:1px solid var(--border);padding:12px;display:flex;gap:10px;align-items:flex-end}
+.chat-input-bar textarea{flex:1;resize:none;max-height:120px;padding:11px 14px;border:1px solid var(--border);border-radius:12px;background:var(--bg);color:var(--text);font:inherit}
+.msg-meta{font-size:11px;color:var(--muted);margin-top:4px}
+.msg-row{display:flex;gap:10px;align-items:flex-end}
+.msg-row.me{flex-direction:row-reverse}
+.sources{margin-top:8px;font-size:13px}
+.sources summary{cursor:pointer;font-weight:600}
+.src-item{border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-top:6px;background:var(--surface)}
+.starter-chips{display:flex;gap:8px;flex-wrap:wrap;padding:0 20px 12px}
+.starter-chips button{font-size:12px}
+.perm-table td:first-child{font-weight:600}
+.key-reveal{background:#0f172a;color:#e2e8f0;border-radius:12px;padding:14px;font-family:var(--font-mono);font-size:13px;word-break:break-all;display:flex;gap:10px;align-items:flex-start}
+.danger-zone{border:1px solid rgba(220,38,38,.4);border-radius:var(--radius-m);padding:20px;margin-top:24px;background:color-mix(in srgb,var(--danger-bg) 40%,transparent)}
+.jump-latest{position:sticky;bottom:8px;align-self:center}

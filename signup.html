@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign up — RAG SaaS</title><link rel="icon" href="assets/logo.svg">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' http://localhost:8000 http://127.0.0.1:8000; img-src 'self' data:;">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/tokens.css"><link rel="stylesheet" href="css/base.css"><link rel="stylesheet" href="css/components.css"><link rel="stylesheet" href="css/layout.css"></head>
+<body><div class="auth-wrap">
+<div class="auth-form-side"><div class="form-box">
+  <a href="index.html" class="flex" style="font-weight:800;color:var(--text);text-decoration:none"><img src="assets/logo.svg" width="30" height="30" alt=""> RAG SaaS</a>
+  <h2 class="mt2">Create your workspace</h2><p class="muted small">An organization is created for you — you become its <strong>Owner</strong>.</p>
+  <form id="f" class="mt2" novalidate>
+    <div class="field"><label for="username">Username</label><input id="username" name="username" autocomplete="username" required placeholder="ada_lovelace" pattern="[A-Za-z0-9_@.+-]+"><div class="error"></div><div class="hint">Letters, numbers and _ only — no spaces.</div></div>
+    <div class="field"><label for="org">Organization name</label><input id="org" name="organization" autocomplete="organization" required placeholder="Acme Inc"><div class="error"></div></div>
+    <div class="field"><label for="email">Work email</label><input id="email" name="email" type="email" autocomplete="email" required placeholder="you@company.com"><div class="error"></div></div>
+    <div class="field"><label for="pw">Password</label><div class="input-wrap"><input id="pw" name="password" type="password" autocomplete="new-password" required minlength="8" placeholder="Min. 8 characters"><button type="button" class="toggle-pw" aria-label="Show password">👁</button></div><div class="pw-meter"><div id="pwm"></div></div><div class="error"></div></div>
+    <div class="field"><label for="pw2">Confirm password</label><input id="pw2" name="password_confirm" type="password" autocomplete="new-password" required><div class="error"></div></div>
+    <button class="btn btn-primary mt1" style="width:100%" id="sub">Create account</button>
+    <p class="small muted mt1">Have an account? <a href="login.html">Log in</a></p>
+  </form></div></div>
+<div class="auth-brand-side"><h2>Ship grounded AI in a day</h2><ul><li>✅ <span>Recursive chunking + Qdrant retrieval</span></li><li>✅ <span>RBAC, invites, multi-org switching</span></li><li>✅ <span>Copy-paste cURL, JS and Python snippets</span></li></ul></div>
+</div><script type="module" src="js/pages/signup.js"></script></body></html>

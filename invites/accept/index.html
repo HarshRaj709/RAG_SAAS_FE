@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Accept invite — RAG SaaS</title><link rel="icon" href="../../assets/logo.svg">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../css/tokens.css"><link rel="stylesheet" href="../../css/base.css"><link rel="stylesheet" href="../../css/components.css"><link rel="stylesheet" href="../../css/layout.css"></head>
+<body><div class="auth-wrap"><div class="auth-form-side"><div class="form-box" id="box">
+  <a href="/index.html" style="font-weight:800;color:var(--text);text-decoration:none">← RAG SaaS</a>
+  <h2 class="mt2">Team invite</h2><div id="content"><div class="skeleton" style="height:90px"></div></div>
+</div></div><div class="auth-brand-side"><h2>You've been invited 🎉</h2><p>Accept to join your team's workspace with shared knowledge bases and bots.</p></div></div>
+<script type="module">
+import { initTheme, store } from '../../js/state.js';
+import { apiFetch, asList } from '../../js/api.js';
+import { ENDPOINTS } from '../../js/config.js';
+import { toast } from '../../js/ui.js';
+import { isAuthed } from '../../js/auth.js';
+initTheme();
+const token = new URLSearchParams(location.search).get('token');
+const box = document.getElementById('content');
+
+function showInviteError(kind, detail) {
+  const expired = kind === 'expired';
+  box.innerHTML = `<div class="alert ${expired ? 'alert-warning' : 'alert-danger'}"><strong>${expired ? 'This invite has expired.' : 'Invalid invite link.'}</strong></div>
+    ${detail ? `<p class="small muted mt1">${detail}</p>` : ''}
+    <p class="small muted mt1">${expired ? 'Invites expire after 2 days. ' : ''}Ask your admin to resend the invite.</p>
+    <a class="btn btn-secondary mt2" href="/dashboard.html">Go to dashboard</a>`;
+}
+
+// 1. Missing token → invalid link.
+if (!token) {
+  box.innerHTML = `<div class="alert alert-danger"><strong>Invalid invite link.</strong></div><p class="small muted mt1">Ask your admin to resend the invite.</p><a class="btn btn-secondary mt2" href="/login.html">Go to login</a>`;
+} else {
+  // 2. Persist immediately (logged out or in).
+  try { sessionStorage.setItem('invite_token', token); } catch { /* ignore */ }
+
+  if (!isAuthed()) {
+    // 3. Logged-OUT: invite landing → signup (accept happens after signup, never before).
+    box.innerHTML = `<div class="card"><h3>🎉 You've been invited</h3>
+      <p class="muted small mt1">Create an account to join your team's workspace.</p>
+      <button class="btn btn-primary mt2" id="join" style="width:100%">Create account to join</button>
+      <p class="small muted mt2">Already have an account? <a href="/login.html?next=${encodeURIComponent('/invites/accept/?token=' + token)}">Log in</a></p></div>`;
+    document.getElementById('join').onclick = () => {
+      location.href = `/signup.html?invite_token=${encodeURIComponent(token)}`;
+    };
+  } else {
+    // Logged-IN: surface a signup-time accept failure, if any.
+    const flag = (() => { try { const f = sessionStorage.getItem('invite_error'); sessionStorage.removeItem('invite_error'); return f; } catch { return null; } })();
+    if (flag === 'expired' || flag === 'invalid') {
+      showInviteError(flag);
+    } else {
+      box.innerHTML = `<div class="card"><h3>You're invited</h3><p class="muted small">Token <span class="mono">${token.slice(0, 10)}…</span></p><button class="btn btn-primary mt2" id="acc" style="width:100%">Accept invite</button></div>`;
+      document.getElementById('acc').onclick = async (e) => {
+        const btn = e.currentTarget; btn.disabled = true; btn.textContent = 'Accepting…';
+        const cleanup = async () => {
+          try {
+            const me = store.getUser() || {};
+            const orgs = asList(await apiFetch(ENDPOINTS.orgs()));
+            for (const o of orgs) {
+              let list = [];
+              try { list = asList(await apiFetch(ENDPOINTS.invites(o.id))); } catch { continue; }
+              const hit = list.find(iv => iv.token === token || (me.email && iv.email && iv.email === me.email));
+              const iid = hit?.id || hit?.pk;
+              if (hit && iid) { try { await apiFetch(ENDPOINTS.inviteDetail(o.id, iid), { method: 'DELETE' }); } catch { /* ignore */ } break; }
+            }
+          } catch { /* ignore */ }
+        };
+        try {
+          const data = await apiFetch(ENDPOINTS.acceptInvite(), { method: 'POST', body: { token } });
+          await cleanup();
+          try { sessionStorage.removeItem('invite_token'); } catch { /* ignore */ }
+          const oid = data?.org_id || data?.orgId || data?.org?.id;
+          if (oid) store.setOrgId(oid);
+          toast('Invite accepted!', 'success'); location.href = '/dashboard.html';
+        } catch (err) {
+          if (err.status === 401) {
+            // Re-login, then retry: login returns here via ?next=.
+            location.href = `/login.html?next=${encodeURIComponent('/invites/accept/?token=' + token)}`;
+            return;
+          }
+          const msg = String(err.message || '').toLowerCase();
+          if (msg.includes('already') && msg.includes('member')) {
+            await cleanup();
+            try { sessionStorage.removeItem('invite_token'); } catch { /* ignore */ }
+            const oid = err.fields?.org_id || err.fields?.orgId;
+            if (oid) store.setOrgId(oid);
+            toast("You're already a member of this organization.", 'success');
+            setTimeout(() => { location.href = '/dashboard.html'; }, 800);
+            box.innerHTML = `<div class="alert alert-info">You're already a member of this organization. Redirecting…</div><a class="btn btn-secondary mt2" href="/dashboard.html">Go to dashboard</a>`;
+            return;
+          }
+          if (msg.includes('expir')) { try { sessionStorage.removeItem('invite_token'); } catch { /* ignore */ } showInviteError('expired'); return; }
+          showInviteError('invalid', err.message);
+        }
+      };
+    }
+  }
+}
+</script></body></html>
