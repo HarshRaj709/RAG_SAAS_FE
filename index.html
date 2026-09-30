@@ -58,9 +58,16 @@
     <div class="card"><h4>Backend proxying</h4><p class="small muted">Never ship bot keys in public frontend code; proxy through your server.</p></div>
     <div class="card"><h4>Sanitized rendering</h4><p class="small muted">All LLM markdown passes through DOMPurify before display.</p></div>
   </div></section>
-<section class="section container" id="api"><h2>Integrate in minutes</h2><p class="lede">One endpoint. Your slug, your key, your session.</p>
-  <div class="card"><div class="tabs" role="tablist"><button class="tab" aria-selected="true" data-snip="curl">cURL</button><button class="tab" aria-selected="false" data-snip="js">JavaScript</button><button class="tab" aria-selected="false" data-snip="py">Python</button></div>
-  <pre class="code-block" id="snip"></pre></div></section>
+<section class="section container" id="api"><h2>Integrate in minutes</h2><p class="lede">One endpoint. Your slug, your key, your session — answers stream back chunk by chunk.</p>
+  <div class="alert alert-warning">🔒 <strong>Security:</strong> never expose the bot API key in public frontend code — proxy through your backend.</div>
+  <div class="card mt2"><h3>Request format</h3><p class="small muted"><span class="mono">POST /api/chat/bot/{slug}/chat/</span> · header <span class="mono">Authorization: Bearer &lt;bot_api_key&gt;</span> · body <span class="mono">{"query", "session_id"}</span>. <span class="mono">session_id</span> is a UUID per conversation; the server remembers the last 10 messages.</p>
+  <div class="tabs mt2" role="tablist"><button class="tab" aria-selected="true" data-snip="curl">cURL</button><button class="tab" aria-selected="false" data-snip="js">JavaScript</button><button class="tab" aria-selected="false" data-snip="py">Python</button></div>
+  <pre class="code-block" id="snip"></pre>
+  <h4 class="mt2">Streaming response (NDJSON chunks)</h4><p class="small muted">Concatenate each <span class="mono">token</span>; the final chunk carries <span class="mono">"done": true</span>.</p>
+  <pre class="code-block">{"token": "Refunds are", "session_id": "550e8400-…"}
+{"token": " available within 30 days…", "session_id": "550e8400-…"}
+{"token": "", "session_id": "550e8400-…", "done": true}</pre>
+  <h4 class="mt2">Errors</h4><div class="table-wrap"><table><thead><tr><th>Code</th><th>Meaning</th></tr></thead><tbody><tr><td class="mono">401/403</td><td>Invalid or missing API key</td></tr><tr><td class="mono">404</td><td>Unknown bot slug</td></tr><tr><td class="mono">429</td><td>Rate limited — back off and retry</td></tr><tr><td class="mono">5xx</td><td>Server/LLM error — retry</td></tr></tbody></table></div></div></section>
 <section class="section container" id="faq"><h2>FAQ</h2><p class="lede">Quick answers before you dive in.</p>
   <details class="faq-item"><summary>What file types are supported?</summary><div class="faq-body">PDF, DOCX, Markdown and TXT. 50 MB per file by default (configurable).</div></details>
   <details class="faq-item"><summary>What happens if I lose my bot API key?</summary><div class="faq-body">We store only a hash, so it can't be recovered. Regenerate a new key from the bot page.</div></details>
@@ -69,24 +76,5 @@
   <div class="center mt3"><a href="signup.html" class="btn btn-primary btn-lg">Get started free</a></div></section>
 </main>
 <footer class="site"><div class="container flex between"><span>© 2026 RAG SaaS · Built for grounded AI support</span><span><a href="https://documenter.getpostman.com/view/41362344/2sBXqKofTd" target="_blank" rel="noopener">API Docs</a> · <a href="login.html">Login</a></span></div></footer>
-<script type="module">
-import { initTheme, getTheme, setTheme } from './js/state.js';
-initTheme();
-const b = document.getElementById('theme-btn');
-b.textContent = getTheme() === 'dark' ? '☀️' : '🌙';
-b.onclick = () => { const n = getTheme() === 'dark' ? 'light' : 'dark'; setTheme(n); b.textContent = n === 'dark' ? '☀️' : '🌙'; };
-const snips = {
-  curl: `POST /api/chat/bot/YOUR-SLUG/chat/ HTTP/1.1\nHost: localhost:8000\nAuthorization: Bearer YOUR_API_KEY\nContent-Type: application/json\n\n{\n  "query": "What is your refund policy?",\n  "session_id": "550e8400-e29b-41d4-a716-446655440000"\n}`,
-  js: `const res = await fetch('http://localhost:8000/api/chat/bot/YOUR-SLUG/chat/', {\n  method: 'POST',\n  headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer YOUR_API_KEY' },\n  body: JSON.stringify({ query: 'What is your refund policy?', session_id: crypto.randomUUID() })\n});\nconst { answer, sources } = await res.json();`,
-  py: `import requests\nr = requests.post(\n  'http://localhost:8000/api/chat/bot/YOUR-SLUG/chat/',\n  headers={'Authorization': 'Bearer YOUR_API_KEY'},\n  json={'query': 'What is your refund policy?', 'session_id': 'uuid-here'}\n)\nprint(r.json()['answer'])`
-};
-const pre = document.getElementById('snip');
-const render = (k) => pre.textContent = snips[k];
-render('curl');
-document.querySelectorAll('[data-snip]').forEach(t => t.onclick = () => { document.querySelectorAll('[data-snip]').forEach(x => x.setAttribute('aria-selected', 'false')); t.setAttribute('aria-selected', 'true'); render(t.dataset.snip); });
-const extra = [['Can I change my plan later?', 'Yes — orgs, KBs and bots migrate cleanly.'], ['Do you offer usage tracking?', 'Per-key usage is coming soon; the dashboard has a placeholder.']];
-const mockBody = document.getElementById('mock-body');
-let i = 0; const convo = [['Do you ship internationally?', 'Yes — we ship to 40+ countries in 3–5 business days.'], ['How do I reset my password?', 'Go to Settings → Security → Change password; the link expires in 1 hour.']];
-if (!matchMedia('(prefers-reduced-motion: reduce)').matches) setInterval(() => { const [q, a] = convo[i++ % convo.length]; mockBody.innerHTML = `<div class="chat-bubble chat-user">${q}</div><div class="chat-bubble chat-assistant">${a}</div>`; }, 5000);
-</script>
+<script type="module" src="js/pages/landing.js"></script>
 </body></html>
