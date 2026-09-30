@@ -1,6 +1,6 @@
 import { initTheme, store } from '../state.js';
 import { guard } from '../router-guard.js';
-import { getOrgContext } from '../components/org-switcher.js';
+import { getOrgContext, currentRole } from '../components/org-switcher.js';
 import { apiFetch, asList } from '../api.js';
 import { ENDPOINTS, API_BASE_URL } from '../config.js';
 import { toast, confirmDialog, skeletonList, emptyState, openModal, copyTextFallback } from '../ui.js';
@@ -12,7 +12,7 @@ await guard('bots.html');
 const { orgId, org } = await getOrgContext();
 const botId = qp('id');
 const page = document.getElementById('page');
-const role = store.getUser()?.role || org?.role || 'member';
+const role = currentRole(org);
 const canManage = role === 'owner' || role === 'admin';
 if (!botId) { page.innerHTML = emptyState('🤖', 'No bot selected', '', `<a class="btn btn-primary" href="bots.html">Back</a>`); throw 0; }
 let bot = null, kbs = [];
@@ -33,20 +33,23 @@ page.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => switchTab(b.d
 function draw() {
   if (tab === 'overview') {
     const linked = bot.knowledge_bases || bot.kbs || bot.kb_ids || [];
+    const kbLabel = (x) => typeof x === 'string' ? kbName(x) : (x.name || x.id);
+    const kbIdOf = (x) => String(typeof x === 'string' ? x : (x.id || x.pk || ''));
     tc.innerHTML = `<div class="grid grid-2"><div class="card"><h3>Details</h3>
       <p class="small mt1">Endpoint</p><div class="code-block">POST ${escapeHtml(endpoint)} <button class="btn btn-secondary btn-sm copy-btn" data-c="${escapeHtml(endpoint)}">Copy</button></div>
-      <div class="field mt2"><label>Linked knowledge bases</label><div class="flex" style="flex-wrap:wrap">${linked.map(id => `<span class="chip">${escapeHtml(kbName(id))}</span>`).join('') || '<span class="muted small">None</span>'}</div></div>
+      <div class="field mt2"><label>Linked knowledge bases</label><div class="flex" style="flex-wrap:wrap">${linked.map(x => `<span class="chip" title="${escapeHtml(kbIdOf(x))}">${escapeHtml(kbLabel(x))}</span>`).join('') || '<span class="muted small">None</span>'}</div></div>
       ${canManage ? `<button class="btn btn-secondary btn-sm" id="edit-kb">Edit linked KBs</button>` : `<p class="tiny muted">🔒 Only owners/admins can edit.</p>`}</div>
       <div class="card"><h3>API key</h3><p class="small muted">Raw keys are shown once at creation. Paste yours in the Playground to test.</p>
       ${canManage ? `<button class="btn btn-secondary btn-sm mt1" id="regen">Regenerate key</button>` : ''}</div></div>
       ${canManage ? `<div class="danger-zone"><h3> Danger zone</h3><div class="flex between mt1"><span class="small">Delete this bot permanently.</span><button class="btn btn-danger btn-sm" id="del">Delete bot</button></div></div>` : ''}`;
     tc.querySelector('[data-c]')?.addEventListener('click', async (e) => { await copyText(e.target.dataset.c); toast('Copied', 'success'); });
     document.getElementById('edit-kb')?.addEventListener('click', () => {
-      const cur = new Set((bot.knowledge_bases || bot.kbs || []).map(String));
-      const { el, close } = openModal(`<div class="modal-head"><h3>Linked KBs</h3><button class="icon-btn" data-close>✕</button></div><div class="modal-body">${kbs.map(k => `<label class="check-item"><input type="checkbox" value="${k.id}" ${cur.has(String(k.id)) ? 'checked' : ''}> ${escapeHtml(k.name)}</label>`).join('')}</div><div class="modal-foot"><button class="btn btn-secondary" data-close>Cancel</button><button class="btn btn-primary" id="sv">Save</button></div>`);
+      const cur = new Set(linked.map(kbIdOf));
+      const { el, close } = openModal(`<div class="modal-head"><h3>Linked KBs</h3><button class="icon-btn" data-close>✕</button></div><div class="modal-body"><p class="small muted">Attach or detach KBs (must belong to this org). Empty selection detaches all.</p>${kbs.map(k => `<label class="kb-pick ${cur.has(String(k.id)) ? 'selected' : ''}"><input type="checkbox" value="${k.id}" ${cur.has(String(k.id)) ? 'checked' : ''}><span style="flex:1"><strong>${escapeHtml(k.name)}</strong></span></label>`).join('') || '<p class="muted small">No knowledge bases in this org.</p>'}</div><div class="modal-foot"><button class="btn btn-secondary" data-close>Cancel</button><button class="btn btn-primary" id="sv">Save</button></div>`);
+      el.querySelectorAll('.kb-pick input').forEach(cb => cb.onchange = () => cb.closest('.kb-pick').classList.toggle('selected', cb.checked));
       el.querySelector('#sv').onclick = async () => {
         const ids = [...el.querySelectorAll('input:checked')].map(i => i.value);
-        try { bot = await apiFetch(ENDPOINTS.botDetail(orgId, botId), { method: 'PATCH', body: { knowledge_base_ids: ids, kb_ids: ids } }); close(); toast('Saved', 'success'); draw(); }
+        try { bot = await apiFetch(ENDPOINTS.botDetail(orgId, botId), { method: 'PATCH', body: { kb_ids: ids } }); close(); toast(ids.length ? 'KBs attached' : 'All KBs detached', 'success'); draw(); }
         catch (e) { toast(e.message, 'error'); }
       };
     });
@@ -69,7 +72,7 @@ function draw() {
     <div class="card mt2"><h3>Request format</h3><p class="small muted"><span class="mono">POST ${escapeHtml(endpoint)}</span> · header <span class="mono">Authorization: Bearer &lt;bot_api_key&gt;</span> · body <span class="mono">{"query", "session_id"}</span>. <span class="mono">session_id</span> is a UUID per conversation; the server remembers the last 10 messages.</p>
     <div class="tabs mt2"><button class="tab" aria-selected="true" data-s="curl">cURL</button><button class="tab" aria-selected="false" data-s="js">JavaScript</button><button class="tab" aria-selected="false" data-s="py">Python</button></div>
     <pre class="code-block" id="sn"></pre>
-    <h4 class="mt2">Example response</h4><pre class="code-block">{\n  "answer": "Refunds are available within 30 days…",\n  "sources": [{ "filename": "policy.pdf", "score": 0.91 }]\n}</pre>
+    <h4 class="mt2">Streaming response (NDJSON chunks)</h4><p class="small muted">The API streams one JSON object per chunk. Concatenate <span class="mono">token</span>; the final chunk has <span class="mono">"done": true</span>.</p><pre class="code-block">{"token": "Refunds are", "session_id": "550e8400-…"}\n{"token": " available within 30 days…", "session_id": "550e8400-…"}\n{"token": "", "session_id": "550e8400-…", "done": true}</pre>
     <h4 class="mt2">Errors</h4><div class="table-wrap"><table><thead><tr><th>Code</th><th>Meaning</th></tr></thead><tbody><tr><td class="mono">401/403</td><td>Invalid or missing API key</td></tr><tr><td class="mono">404</td><td>Unknown bot slug</td></tr><tr><td class="mono">429</td><td>Rate limited — back off and retry</td></tr><tr><td class="mono">5xx</td><td>Server/LLM error — retry</td></tr></tbody></table></div></div>`;
     const sn = tc.querySelector('#sn'); const map = { curl, js, py }; sn.textContent = curl;
     tc.querySelectorAll('[data-s]').forEach(b => b.onclick = () => { tc.querySelectorAll('[data-s]').forEach(x => x.setAttribute('aria-selected', 'false')); b.setAttribute('aria-selected', 'true'); sn.textContent = map[b.dataset.s]; });

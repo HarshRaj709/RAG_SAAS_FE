@@ -1,8 +1,8 @@
 import { initTheme, store } from '../state.js';
 import { guard } from '../router-guard.js';
-import { getOrgContext } from '../components/org-switcher.js';
+import { getOrgContext, currentRole } from '../components/org-switcher.js';
 import { apiFetch, asList, uploadWithProgress } from '../api.js';
-import { ENDPOINTS, ACCEPTED_EXTS, MAX_FILE_MB, POLL_MS, FINAL_DOC_STATUSES } from '../config.js';
+import { ENDPOINTS, ACCEPTED_EXTS, MAX_FILE_MB, POLL_MS, FINAL_DOC_STATUSES, MAX_DOC_POLLS } from '../config.js';
 import { toast, confirmDialog, skeletonList, emptyState, openModal } from '../ui.js';
 import { escapeHtml, timeAgo, formatBytes, qp } from '../utils.js';
 initTheme();
@@ -10,34 +10,73 @@ await guard('knowledge-bases.html');
 const { orgId, org } = await getOrgContext();
 const kbId = qp('id');
 const page = document.getElementById('page');
-const role = store.getUser()?.role || org?.role || 'member';
+const role = currentRole(org);
 const canManage = role === 'owner' || role === 'admin';
 if (!kbId) { page.innerHTML = emptyState('📚', 'No KB selected', '', `<a class="btn btn-primary" href="knowledge-bases.html">Back to list</a>`); throw 0; }
-let kb = null, docs = [], tab = qp('tab', 'documents'), poller = null;
+let kb = null, docs = [], tab = qp('tab', 'documents'), poller = null, pollCount = 0, stalled = false;
+/** Doc field accessors — backend key names vary. */
+const docId = (d) => d.id || d.doc_id || d.pk || d.uuid;
+const docName = (d) => d.filename || d.file_name || d.name || 'Untitled';
+const docStatus = (d) => String(
+  d.status || d.ingestion_status || d.state || d.ingest_status
+  || (d.ingested_at ? 'completed' : 'pending')
+);
+const docChunks = (d) => (d.chunk_count ?? d.chunks_count ?? d.chunks ?? null);
+/** Documents come embedded in the KB detail (no separate list endpoint). */
+function kbDocs(detail) {
+  if (!detail || typeof detail !== 'object') return [];
+  for (const k of ['documents', 'files', 'docs', 'uploads', 'items']) {
+    if (Array.isArray(detail[k])) return detail[k];
+  }
+  return [];
+}
 async function loadKb() {
   try { kb = await apiFetch(ENDPOINTS.kbDetail(orgId, kbId)); }
   catch { const l = asList(await apiFetch(ENDPOINTS.kbs(orgId)).catch(() => [])); kb = l.find(x => String(x.id) === String(kbId)) || { id: kbId, name: 'Knowledge Base' }; }
 }
-async function loadDocs(silent) {
+const isFinal = (d) => FINAL_DOC_STATUSES.includes(docStatus(d).toLowerCase());
+function stopPoll() { if (poller) { clearInterval(poller); poller = null; } }
+async function loadDocs(silent, opts = {}) {
+  if (opts.reset) { pollCount = 0; stalled = false; stopPoll(); }
   try {
-    docs = asList(await apiFetch(ENDPOINTS.documents(orgId, kbId)));
+    const detail = await apiFetch(ENDPOINTS.kbDetail(orgId, kbId));
+    if (detail && typeof detail === 'object' && !Array.isArray(detail)) kb = { ...kb, ...detail };
+    docs = kbDocs(detail);
+    const pending = docs.some(d => !isFinal(d));
+    if (!pending) { stopPoll(); pollCount = 0; if (stalled) { stalled = false; } renderDocs(); return; }
+    if (stalled) { renderDocs(); return; } // gave up auto-polling; wait for manual Refresh
+    if (pollCount >= MAX_DOC_POLLS) {
+      stopPoll(); stalled = true; renderDocs();
+      toast('Ingestion is taking longer than usual — auto-check stopped. Hit Refresh to check again.', 'info');
+      return;
+    }
     renderDocs();
-    const pending = docs.some(d => !FINAL_DOC_STATUSES.includes((d.status || '').toLowerCase()));
-    if (pending && !poller && !document.hidden) poller = setInterval(() => loadDocs(true), POLL_MS);
-    if (!pending && poller) { clearInterval(poller); poller = null; }
+    if (!poller && !document.hidden) poller = setInterval(() => { pollCount++; loadDocs(true); }, POLL_MS);
   } catch (e) { if (!silent) toast(e.message, 'error'); }
 }
-document.addEventListener('visibilitychange', () => { if (document.hidden && poller) { clearInterval(poller); poller = null; } else if (!document.hidden) loadDocs(true); });
+document.addEventListener('visibilitychange', () => { if (document.hidden) stopPoll(); else if (!document.hidden && !stalled) loadDocs(true); });
 function fileIcon(fn = '') { const e = fn.split('.').pop().toLowerCase(); return e === 'pdf' ? '📕' : e === 'docx' ? '📘' : '📄'; }
+function badgeFor(s) {
+  const v = s.toLowerCase();
+  if (['completed', 'complete', 'done', 'ready', 'indexed', 'processed', 'success', 'succeeded'].includes(v)) return 'b-completed';
+  if (['failed', 'error', 'errored'].includes(v)) return 'b-failed';
+  if (['processing', 'ingesting', 'running', 'queued', 'in_progress'].includes(v)) return 'b-processing';
+  return 'b-pending';
+}
 function renderDocs() {
   const w = document.getElementById('docs');
   if (!w) return;
   if (!docs.length) { w.innerHTML = emptyState('📄', 'No documents yet', 'Upload PDFs, DOCX, MD or TXT. Documents are split using a recursive text splitter.', ''); return; }
+  const hasPending = docs.some(d => !isFinal(d));
   w.innerHTML = `<div class="table-wrap"><table><thead><tr><th>File</th><th>Status</th><th>Chunks</th><th>Uploaded</th><th></th></tr></thead><tbody>
-    ${docs.map(d => `<tr><td>${fileIcon(d.filename)} <strong>${escapeHtml(d.filename || d.name)}</strong><br><span class="tiny muted">${formatBytes(d.size_bytes || d.size)}</span></td>
-    <td><span class="badge b-${(d.status || 'pending').toLowerCase()}">${escapeHtml(d.status || 'pending')}</span></td>
-    <td class="mono">${d.chunk_count ?? d.chunks ?? '—'}</td><td class="small" title="${escapeHtml(d.created_at || '')}">${timeAgo(d.created_at)}${d.uploaded_by ? `<br><span class="tiny muted">${escapeHtml(d.uploaded_by)}</span>` : ''}</td>
-    <td>${canManage ? `<button class="btn btn-ghost btn-sm" data-rm="${d.id}">Delete</button>` : ''}</td></tr>`).join('')}</tbody></table></div>`;
+    ${docs.map(d => `<tr><td>${fileIcon(docName(d))} <strong>${escapeHtml(docName(d))}</strong><br><span class="tiny muted">${formatBytes(d.size_bytes || d.size)}</span></td>
+    <td><span class="badge ${badgeFor(docStatus(d))}">${escapeHtml(docStatus(d))}</span></td>
+    <td class="mono">${docChunks(d) ?? '—'}</td><td class="small" title="${escapeHtml(d.created_at || d.uploaded_at || '')}">${timeAgo(d.created_at || d.uploaded_at)}${d.uploaded_by ? `<br><span class="tiny muted">${escapeHtml(d.uploaded_by)}</span>` : ''}</td>
+    <td>${canManage ? `<button class="btn btn-ghost btn-sm" data-rm="${docId(d)}">Delete</button>` : ''}</td></tr>`).join('')}</tbody></table></div>
+    ${stalled ? `<div class="alert alert-warning mt2">Still showing non-final status after ~2 min of checks — auto-refresh stopped. The backend may be slow or stuck. <button class="btn btn-secondary btn-sm" id="docs-refresh">Refresh now</button></div>`
+      : hasPending ? `<p class="tiny muted mt1">⏳ Checking ingestion status every few seconds… <button class="btn btn-ghost btn-sm" id="docs-refresh">Refresh now</button></p>` : ''}`;
+  const rf = w.querySelector('#docs-refresh');
+  if (rf) rf.onclick = () => loadDocs(false, { reset: true });
   w.querySelectorAll('[data-rm]').forEach(b => b.onclick = async () => {
     if (!await confirmDialog({ title: 'Delete document?', body: 'The file and its chunks will be removed from search.', confirmText: 'Delete' })) return;
     try { await apiFetch(ENDPOINTS.documentDetail(orgId, kbId, b.dataset.rm), { method: 'DELETE' }); toast('Document deleted', 'success'); loadDocs(); }
@@ -57,10 +96,10 @@ async function startUpload(file) {
   uploads.set(id, { name: file.name, p: 0, state: 'uploading', file, ctrl }); renderUploads();
   const fd = new FormData(); fd.append('file', file);
   try {
-    await uploadWithProgress(ENDPOINTS.documents(orgId, kbId), fd, (p) => { const u = uploads.get(id); if (u) { u.p = p; renderUploads(); } }, ctrl.signal);
+    await uploadWithProgress(ENDPOINTS.ingest(orgId, kbId), fd, (p) => { const u = uploads.get(id); if (u) { u.p = p; renderUploads(); } }, ctrl.signal);
     uploads.get(id).state = 'done'; uploads.get(id).p = 100; renderUploads();
     setTimeout(() => { uploads.delete(id); renderUploads(); }, 2500);
-    toast(`${file.name} uploaded — processing…`, 'success'); loadDocs(true);
+    toast(`${file.name} uploaded — processing…`, 'success'); loadDocs(true, { reset: true });
   } catch (e) { const u = uploads.get(id); if (u) { u.state = 'failed'; renderUploads(); } toast(`${file.name}: ${e.message}`, 'error'); }
 }
 function validFile(f) {

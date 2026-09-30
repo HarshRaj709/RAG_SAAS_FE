@@ -22,14 +22,15 @@ export const ENDPOINTS = {
   invites: (id) => `/api/organization/orgs/${id}/invites/`, // GET pending list, POST {email, role}
   inviteDetail: (orgId, iid) => `/api/organization/orgs/${orgId}/invites/${iid}/`, // DELETE revoke
   acceptInvite: () => '/api/organization/invites/accept/', // POST {token}
-  kbs: (id) => `/api/knowledge_base/orgs/${id}/kbs/`,
-  kbDetail: (orgId, kbId) => `/api/organization/orgs/${orgId}/kbs/${kbId}/`,
-  documents: (orgId, kbId) => `/api/organization/orgs/${orgId}/kbs/${kbId}/documents/`,
-  documentDetail: (orgId, kbId, docId) => `/api/organization/orgs/${orgId}/kbs/${kbId}/documents/${docId}/`,
+  kbs: (id) => `/api/knowledge_base/orgs/${id}/kbs/`, // GET list, POST create {name, description}
+  kbDetail: (orgId, kbId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/`, // GET detail, PATCH {name, description}, DELETE
+  ingest: (orgId, kbId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/ingest/`, // POST multipart {file}
+  documentDetail: (orgId, kbId, docId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/documents/${docId}/`, // DELETE single doc
   bots: (id) => `/api/chat/orgs/${id}/bots/`,
-  botDetail: (orgId, botId) => `/api/organization/orgs/${orgId}/bots/${botId}/`,
-  regenerateKey: (orgId, botId) => `/api/organization/orgs/${orgId}/bots/${botId}/regenerate-key/`, // TODO(verify)
+  botDetail: (orgId, botId) => `/api/chat/orgs/${orgId}/bots/${botId}/`,
+  regenerateKey: (orgId, botId) => `/api/chat/orgs/${orgId}/bots/${botId}/keys/rotate/`, // POST: rotates key, raw key returned once
   // Public chat — verified pattern from plan; alt: /api/bots/{id}/chat/
   publicChat: (slug) => `/api/chat/bot/${slug}/chat/`, // TODO(verify) against Postman
 };
-export const FINAL_DOC_STATUSES = ['completed', 'failed'];
+export const FINAL_DOC_STATUSES = ['completed', 'complete', 'done', 'ready', 'indexed', 'processed', 'success', 'succeeded', 'failed', 'error', 'errored'];
+export const MAX_DOC_POLLS = 30; // ~2 min at POLL_MS; then polling stops with a manual Refresh

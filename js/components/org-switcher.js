@@ -42,3 +42,9 @@ export async function getOrgMembers(orgId) {
   return { detail, members: list.length ? list : asList(detail).length ? normalizeMembers(asList(detail)) : list, count: memberCount(detail) };
 }
 export function switchOrg(id) { store.setOrgId(id); location.reload(); }
+/** Current user's role in the org. Backend field is `user_role`; list items may omit it. */
+export function currentRole(org) {
+  const me = store.getUser() || {};
+  return String(org?.user_role || me.role || org?.role || 'member').toLowerCase();
+}
+export function canManageRole(r) { return r === 'owner' || r === 'admin'; }

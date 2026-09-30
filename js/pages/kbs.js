@@ -1,6 +1,6 @@
 import { initTheme, store } from '../state.js';
 import { guard } from '../router-guard.js';
-import { getOrgContext } from '../components/org-switcher.js';
+import { getOrgContext, currentRole } from '../components/org-switcher.js';
 import { apiFetch, asList } from '../api.js';
 import { ENDPOINTS } from '../config.js';
 import { toast, openModal, confirmDialog, skeletonList, emptyState, setFieldError } from '../ui.js';
@@ -9,7 +9,7 @@ initTheme();
 await guard('knowledge-bases.html');
 const page = document.getElementById('page');
 const { orgId, org } = await getOrgContext();
-const role = store.getUser()?.role || org?.role || 'member';
+const role = currentRole(org);
 const canManage = role === 'owner' || role === 'admin';
 let all = [], view = 'grid', q = new URLSearchParams(location.search).get('q') || '';
 page.innerHTML = `
