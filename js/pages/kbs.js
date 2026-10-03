@@ -24,13 +24,39 @@ async function load() {
   try { all = asList(await apiFetch(ENDPOINTS.kbs(orgId))); } catch (e) { list.innerHTML = emptyState('⚠️', 'Could not load', escapeHtml(e.message), `<button class="btn btn-primary" onclick="location.reload()">Retry</button>`); return; }
   render();
 }
+/** Tolerant count accessors — backend key names vary; fall back to embedded arrays. */
+function kbDocsArr(k) {
+  for (const key of ['documents', 'files', 'docs', 'uploads', 'items']) {
+    if (Array.isArray(k?.[key])) return k[key];
+  }
+  return null;
+}
+function kbDocCount(k) {
+  for (const key of ['document_count', 'documents_count', 'docs_count', 'doc_count', 'num_documents', 'total_documents', 'count']) {
+    const v = Number(k?.[key]);
+    if (Number.isFinite(v)) return v;
+  }
+  const arr = kbDocsArr(k);
+  if (arr) return arr.length;
+  return 0;
+}
+function kbChunkCount(k) {
+  for (const key of ['total_chunks', 'chunks_count', 'chunk_count', 'total_chunks_count', 'num_chunks', 'total_embeddings']) {
+    const v = Number(k?.[key]);
+    if (Number.isFinite(v)) return v;
+  }
+  if (typeof k?.chunks === 'number') return k.chunks;
+  const arr = kbDocsArr(k);
+  if (arr) return arr.reduce((a, x) => a + (Number(x?.chunk_count ?? x?.chunks_count ?? (typeof x?.chunks === 'number' ? x.chunks : 0)) || 0), 0);
+  return 0;
+}
 function render() {
   const list = document.getElementById('list');
   const f = all.filter(k => (k.name || '').toLowerCase().includes(q.toLowerCase()));
   if (!f.length) { list.innerHTML = emptyState('📚', q ? 'No matches' : 'No knowledge bases yet', 'Create one, then upload PDFs, DOCX, MD or TXT files.', canManage ? `<button class="btn btn-primary" id="e-new">New Knowledge Base</button>` : ''); document.getElementById('e-new')?.addEventListener('click', openCreate); return; }
   list.innerHTML = `<div class="${view === 'grid' ? 'kb-grid' : 'grid'}">` + f.map(k => `
     <div class="card hoverable kb-card"><h3>${escapeHtml(k.name)}</h3><p class="small muted">${escapeHtml(k.description || 'No description')}</p>
-    <div class="mt1 flex" style="flex-wrap:wrap"><span class="chip">📄 ${k.document_count ?? '?'} docs</span><span class="chip">🧩 ${k.total_chunks ?? k.chunk_count ?? '?'} chunks</span></div>
+    <div class="mt1 flex" style="flex-wrap:wrap"><span class="chip">📄 ${kbDocCount(k)} docs</span><span class="chip">🧩 ${kbChunkCount(k)} chunks</span></div>
     <p class="tiny muted mt1">Created ${formatDate(k.created_at)}</p>
     <div class="flex mt2"><a class="btn btn-secondary btn-sm" href="knowledge-base.html?id=${k.id}">Open</a>
     ${canManage ? `<button class="btn btn-ghost btn-sm" data-edit="${k.id}">Edit</button><button class="btn btn-ghost btn-sm" data-del="${k.id}" title="Only owners and admins can do this">Delete</button>` : `<span class="tiny muted" title="Only owners and admins can do this">🔒 Read-only</span>`}</div></div>`).join('') + `</div>`;
