@@ -1,5 +1,5 @@
 /** Central API configuration. Edit ONLY here when backend paths differ. */
-export const API_BASE_URL = localStorage.getItem('rag_api_base') || 'http://localhost:8000';
+export const API_BASE_URL = (localStorage.getItem('rag_api_base') || 'https://rag-chat-bot-5yva.onrender.com/').trim().replace(/\/+$/, '');
 export const USE_MOCK = false; // set true to demo UI offline with fake data
 export const MAX_FILE_MB = 50;
 export const ACCEPTED_EXTS = ['.pdf', '.docx', '.md', '.txt'];
