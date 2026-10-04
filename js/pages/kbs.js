@@ -53,7 +53,7 @@ function kbChunkCount(k) {
 function render() {
   const list = document.getElementById('list');
   const f = all.filter(k => (k.name || '').toLowerCase().includes(q.toLowerCase()));
-  if (!f.length) { list.innerHTML = emptyState('📚', q ? 'No matches' : 'No knowledge bases yet', 'Create one, then upload PDFs, DOCX, MD or TXT files.', canManage ? `<button class="btn btn-primary" id="e-new">New Knowledge Base</button>` : ''); document.getElementById('e-new')?.addEventListener('click', openCreate); return; }
+  if (!f.length) { list.innerHTML = emptyState('📚', q ? 'No matches' : 'No knowledge bases yet', 'Create one, then upload PDFs, DOCX, MD or TXT files.', canManage ? `<button class="btn btn-primary" id="e-new">New Knowledge Base</button>` : ''); document.getElementById('e-new')?.addEventListener('click', () => openCreate()); return; }
   list.innerHTML = `<div class="${view === 'grid' ? 'kb-grid' : 'grid'}">` + f.map(k => `
     <div class="card hoverable kb-card"><h3>${escapeHtml(k.name)}</h3><p class="small muted">${escapeHtml(k.description || 'No description')}</p>
     <div class="mt1 flex" style="flex-wrap:wrap"><span class="chip">📄 ${kbDocCount(k)} docs</span><span class="chip">🧩 ${kbChunkCount(k)} chunks</span></div>
@@ -69,6 +69,7 @@ function render() {
   });
 }
 function openCreate(existing) {
+  if (existing instanceof Event) existing = undefined;
   const { el, close } = openModal(`<div class="modal-head"><h3>${existing ? 'Edit' : 'New'} Knowledge Base</h3><button class="icon-btn" data-close>✕</button></div>
     <form id="kf"><div class="modal-body">
     <div class="field"><label>Name (unique per org)</label><input name="name" required value="${escapeHtml(existing?.name || '')}"><div class="error"></div><div class="hint">Letters, numbers, spaces and dashes.</div></div>
