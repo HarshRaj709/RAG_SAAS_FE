@@ -1,6 +1,8 @@
 /** Central API configuration. Edit ONLY here when backend paths differ. */
 export const API_BASE_URL = (localStorage.getItem('rag_api_base') || 'https://rag-chat-bot-5yva.onrender.com/').trim().replace(/\/+$/, '');
 export const USE_MOCK = false; // set true to demo UI offline with fake data
+/** Google OAuth client ID. Paste your Web client ID here, or set localStorage 'rag_google_cid'. Empty = Google buttons hidden. */
+export const GOOGLE_CLIENT_ID = (localStorage.getItem('rag_google_cid') || '1098189772889-3mpemau29ut364viqh3nd86oqkt6c0sk.apps.googleusercontent.com').trim();
 export const MAX_FILE_MB = 50;
 export const ACCEPTED_EXTS = ['.pdf', '.docx', '.md', '.txt'];
 export const POLL_MS = 4000;
@@ -10,6 +12,7 @@ export const ENDPOINTS = {
   signup: () => '/api/auth/register/',
   login: () => '/api/auth/login/',
   refresh: () => '/api/auth/token/refresh/', // TODO(verify): confirm against Postman docs
+  google: () => '/api/auth/google/', // POST {id_token} — signup + login in one call
   me: () => '/api/auth/me/', // TODO(verify): may be /api/users/me/
   orgs: () => '/api/organization/orgs/',
   orgCreate: () => '/api/organization/orgs/create/',

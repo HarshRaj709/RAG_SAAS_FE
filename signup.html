@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sign up — RAG SaaS</title><link rel="icon" href="assets/logo.svg">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' http://localhost:8000 http://127.0.0.1:8000 https://rag-chat-bot-5yva.onrender.com; img-src 'self' data:;">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://accounts.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; frame-src https://accounts.google.com; connect-src 'self' http://localhost:8000 http://127.0.0.1:8000 https://rag-chat-bot-5yva.onrender.com https://accounts.google.com; img-src 'self' data:;">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/tokens.css"><link rel="stylesheet" href="css/base.css"><link rel="stylesheet" href="css/components.css"><link rel="stylesheet" href="css/layout.css"></head>
 <body><div class="auth-wrap">
@@ -16,6 +16,8 @@
     <div class="field"><label for="pw2">Confirm password</label><input id="pw2" name="password_confirm" type="password" autocomplete="new-password" required><div class="error"></div></div>
     <button class="btn btn-primary mt1" style="width:100%" id="sub">Create account</button>
     <p class="small muted mt1">Have an account? <a href="login.html">Log in</a></p>
-  </form></div></div>
+  </form>
+  <div class="flex mt2" style="align-items:center;gap:12px"><span style="flex:1;border-top:1px solid var(--border)"></span><span class="small muted">or</span><span style="flex:1;border-top:1px solid var(--border)"></span></div>
+  <div id="google-btn" class="mt2" style="display:flex;justify-content:center;min-height:44px"></div></div></div>
 <div class="auth-brand-side"><h2>Ship grounded AI in a day</h2><ul><li>✅ <span>Recursive chunking + Qdrant retrieval</span></li><li>✅ <span>RBAC, invites, multi-org switching</span></li><li>✅ <span>Copy-paste cURL, JS and Python snippets</span></li></ul></div>
 </div><script type="module" src="js/pages/signup.js"></script></body></html>

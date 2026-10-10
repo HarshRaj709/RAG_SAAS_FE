@@ -1,6 +1,7 @@
 import { initTheme } from '../state.js';
-import { signup, login } from '../auth.js';
+import { signup, login, googleAuth } from '../auth.js';
 import { toast, setFieldError, withLoading } from '../ui.js';
+import { mountGoogleButton } from '../google.js';
 initTheme();
 document.querySelector('.toggle-pw').onclick = () => { const i = document.getElementById('pw'); i.type = i.type === 'password' ? 'text' : 'password'; };
 const pw = document.getElementById('pw'), pwm = document.getElementById('pwm');
@@ -96,4 +97,24 @@ document.getElementById('sub').onclick = withLoading(document.getElementById('su
     toast(err.message || 'Signup failed', 'error');
     focusFirstInvalid(err);
   }
+});
+// Google sign-up: backend creates-or-logs-in in one call. Reuse the invite
+// accept page for invite tokens (it already handles JWT + edge cases).
+mountGoogleButton(document.getElementById('google-btn'), {
+  mode: 'signup',
+  onCredential: async (credential) => {
+    try {
+      await googleAuth(credential);
+      let token = null;
+      try { token = sessionStorage.getItem('invite_token'); } catch { /* ignore */ }
+      if (token) {
+        try { sessionStorage.removeItem('invite_token'); } catch { /* ignore */ }
+        toast('Account ready — joining your workspace…', 'success');
+        location.href = `/invites/accept/?token=${encodeURIComponent(token)}`;
+        return;
+      }
+      toast('Account created — welcome!', 'success');
+      location.href = 'dashboard.html';
+    } catch (err) { toast(err.message || 'Google sign-up failed', 'error'); }
+  },
 });

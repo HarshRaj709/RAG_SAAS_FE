@@ -1,6 +1,7 @@
 import { initTheme } from '../state.js';
-import { login, getNext } from '../auth.js';
+import { login, googleAuth, getNext } from '../auth.js';
 import { toast, setFieldError, withLoading } from '../ui.js';
+import { mountGoogleButton } from '../google.js';
 initTheme();
 document.querySelector('.toggle-pw').onclick = (e) => { const i = document.getElementById('pw'); i.type = i.type === 'password' ? 'text' : 'password'; };
 const form = document.getElementById('f');
@@ -13,3 +14,10 @@ document.getElementById('sub').onclick = withLoading(document.getElementById('su
   catch (err) { setFieldError(form, err); toast(err.message || 'Login failed', 'error'); document.getElementById('pw').focus(); }
 });
 form.addEventListener('submit', (e) => { e.preventDefault(); document.getElementById('sub').click(); });
+// Google sign-in: same JWT session as password login, then follow ?next=.
+mountGoogleButton(document.getElementById('google-btn'), {
+  onCredential: async (credential) => {
+    try { await googleAuth(credential); toast('Welcome back!', 'success'); location.href = getNext(); }
+    catch (err) { toast(err.message || 'Google sign-in failed', 'error'); }
+  },
+});

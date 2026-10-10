@@ -13,6 +13,15 @@ export async function login(usernameOrEmail, password) {
   const v = (usernameOrEmail || '').trim();
   // Send both keys: some backends expect `username`, others `email`.
   const data = await apiFetch(ENDPOINTS.login(), { method: 'POST', body: { username: v, email: v, password }, auth: false });
+  return persistSession(data);
+}
+/** Google sign-in/up: exchange GIS id_token for app JWTs. Backend creates or logs in the user. */
+export async function googleAuth(idToken) {
+  const data = await apiFetch(ENDPOINTS.google(), { method: 'POST', body: { id_token: idToken }, auth: false });
+  return persistSession(data);
+}
+/** Shared JWT extraction — backends nest tokens as user.tokens.{access_token, refresh} or flat. */
+function persistSession(data) {
   const t = data?.tokens || data?.user?.tokens || data?.data?.tokens || {};
   // Backend returns tokens nested as user.tokens.{access_token, refresh};
   // also support flat {access, refresh} / {access_token, refresh_token}.
@@ -25,7 +34,7 @@ export async function login(usernameOrEmail, password) {
   localStorage.setItem('rag_access', access);
   if (refresh) localStorage.setItem('rag_refresh', refresh);
   const u = data.user || data?.data?.user || null;
-  if (u) store.setUser({ name: u.username || u.name, email: u.email, role: u.role, ...u });
+  if (u) store.setUser({ name: u.username || u.name || u.email, email: u.email, role: u.role, ...u });
   return data;
 }
 export async function signup(payload) {
@@ -34,6 +43,7 @@ export async function signup(payload) {
 export function logout() {
   localStorage.removeItem('rag_access'); localStorage.removeItem('rag_refresh');
   sessionStorage.clear(); store.clear();
+  try { window.google?.accounts?.id?.disableAutoSelect(); } catch { /* GSI not loaded */ }
   location.href = 'login.html';
 }
 export function isAuthed() { return !!localStorage.getItem('rag_access'); }
