@@ -16,7 +16,7 @@ page.innerHTML = `<div class="page-head"><div><h2>Bots</h2><p class="muted">Chat
 <div class="search-input" style="max-width:380px"><span>🔍</span><input id="q" placeholder="Search bots…" aria-label="Search bots"></div><div id="list" class="mt2"></div>`;
 async function load() {
   document.getElementById('list').innerHTML = skeletonList(3);
-  try { [bots, kbs] = [asList(await apiFetch(ENDPOINTS.bots(orgId))), asList(await apiFetch(ENDPOINTS.kbs(orgId)).catch(() => []))]; }
+  try { [bots, kbs] = await Promise.all([apiFetch(ENDPOINTS.bots(orgId), { cacheTtl: 15000 }).then(asList), apiFetch(ENDPOINTS.kbs(orgId), { cacheTtl: 15000 }).then(asList).catch(() => [])]); }
   catch (e) { document.getElementById('list').innerHTML = emptyState('⚠️', 'Could not load', escapeHtml(e.message), `<button class="btn btn-primary" onclick="location.reload()">Retry</button>`); return; }
   render();
 }

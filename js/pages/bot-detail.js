@@ -16,8 +16,7 @@ const role = currentRole(org);
 const canManage = role === 'owner' || role === 'admin';
 if (!botId) { page.innerHTML = emptyState('🤖', 'No bot selected', '', `<a class="btn btn-primary" href="bots.html">Back</a>`); throw 0; }
 let bot = null, kbs = [];
-try { bot = await apiFetch(ENDPOINTS.botDetail(orgId, botId)); } catch (e) { page.innerHTML = emptyState('⚠️', 'Bot not found', escapeHtml(e.message), `<a class="btn btn-primary" href="bots.html">Back</a>`); throw 0; }
-try { kbs = asList(await apiFetch(ENDPOINTS.kbs(orgId))); } catch { kbs = []; }
+try { [bot, kbs] = await Promise.all([apiFetch(ENDPOINTS.botDetail(orgId, botId), { cacheTtl: 15000 }), apiFetch(ENDPOINTS.kbs(orgId), { cacheTtl: 15000 }).then(asList).catch(() => [])]); } catch (e) { page.innerHTML = emptyState('⚠️', 'Bot not found', escapeHtml(e.message), `<a class="btn btn-primary" href="bots.html">Back</a>`); throw 0; }
 let tab = qp('tab', 'overview');
 const endpoint = `${API_BASE_URL}${ENDPOINTS.publicChat(bot.slug)}`;
 const kbName = (id) => kbs.find(k => String(k.id) === String(id))?.name || String(id).slice(0, 8);

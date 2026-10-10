@@ -21,7 +21,7 @@ page.innerHTML = `
 async function load() {
   const list = document.getElementById('list');
   list.innerHTML = skeletonList(3);
-  try { all = asList(await apiFetch(ENDPOINTS.kbs(orgId))); } catch (e) { list.innerHTML = emptyState('⚠️', 'Could not load', escapeHtml(e.message), `<button class="btn btn-primary" onclick="location.reload()">Retry</button>`); return; }
+  try { all = asList(await apiFetch(ENDPOINTS.kbs(orgId), { cacheTtl: 15000 })); } catch (e) { list.innerHTML = emptyState('⚠️', 'Could not load', escapeHtml(e.message), `<button class="btn btn-primary" onclick="location.reload()">Retry</button>`); return; }
   render();
 }
 /** Tolerant count accessors — backend key names vary; fall back to embedded arrays. */

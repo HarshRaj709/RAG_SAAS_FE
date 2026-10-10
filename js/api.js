@@ -9,6 +9,43 @@ export function asList(data) {
 }
 function getAccess() { return localStorage.getItem('rag_access'); }
 
+/* ---- GET cache + in-flight dedup ----
+ * Hard refresh fired 3-4 identical GETs (guard → topbar → org-context)
+ * plus N sequential kbDetail calls. This layer collapses concurrent
+ * identical GETs into one network request and serves short-TTL cached
+ * results (memory + sessionStorage so same-tab hard refresh still hits).
+ * Any non-GET mutation busts the cache so creates/deletes never go stale.
+ */
+const MEM_CACHE = new Map(); // key -> { expiry, data }
+const INFLIGHT = new Map(); // key -> Promise
+const DEFAULT_TTL = 20000;
+const SS_PREFIX = 'rag_cache:';
+
+function cacheKey(method, url) { return `${method.toUpperCase()} ${url}`; }
+function ssGet(key) {
+  try {
+    const raw = sessionStorage.getItem(SS_PREFIX + key);
+    if (!raw) return null;
+    const { expiry, data } = JSON.parse(raw);
+    if (!expiry || Date.now() > expiry) { sessionStorage.removeItem(SS_PREFIX + key); return null; }
+    return data;
+  } catch { return null; }
+}
+function ssSet(key, data, ttl) {
+  try { sessionStorage.setItem(SS_PREFIX + key, JSON.stringify({ expiry: Date.now() + ttl, data })); } catch { /* quota/full — ignore */ }
+}
+export function invalidateCache(prefix = '') {
+  for (const k of [...MEM_CACHE.keys()]) if (!prefix || k.includes(prefix)) MEM_CACHE.delete(k);
+  try {
+    if (!prefix) {
+      for (let i = sessionStorage.length - 1; i >= 0; i--) {
+        const k = sessionStorage.key(i);
+        if (k && k.startsWith(SS_PREFIX)) sessionStorage.removeItem(k);
+      }
+    }
+  } catch { /* ignore */ }
+}
+
 async function refreshOnce() {
   const refresh = localStorage.getItem('rag_refresh');
   if (!refresh) return false;
@@ -56,37 +93,64 @@ function mockResponse(method, path, body) {
 /**
  * Authenticated fetch wrapper.
  * @param {string} path endpoint path (from config.js)
- * @param {object} opts {method, body, auth=true, signal, botKey}
+ * @param {object} opts {method, body, auth=true, signal, botKey, cacheTtl}
+ *  - GETs are deduped (concurrent identical) + cached for `cacheTtl` ms
+ *    (default 20s). Pass cacheTtl: 0 to bypass cache for fresh data.
  */
-export async function apiFetch(path, { method = 'GET', body, auth = true, signal, botKey, isForm = false } = {}) {
+export async function apiFetch(path, { method = 'GET', body, auth = true, signal, botKey, isForm = false, cacheTtl } = {}) {
   if (USE_MOCK) { await new Promise(r => setTimeout(r, 350)); return mockResponse(method, path, body); }
   const url = path.startsWith('http') ? path : API_BASE_URL + path;
-  const headers = {};
-  if (!isForm) headers['Content-Type'] = 'application/json';
-  if (auth && getAccess()) headers['Authorization'] = `Bearer ${getAccess()}`;
-  if (botKey) headers['Authorization'] = `Bearer ${botKey}`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 30000);
-  if (signal) signal.addEventListener('abort', () => controller.abort());
-  const doFetch = () => fetch(url, { method, headers, signal: controller.signal, body: body == null ? undefined : (isForm ? body : JSON.stringify(body)) });
-  let res;
-  try { res = await doFetch(); }
-  catch (e) { clearTimeout(timer); throw { status: 0, message: e.name === 'AbortError' ? 'Request timed out. Try again.' : 'Network error. Is the backend running?' }; }
-  clearTimeout(timer);
-  if (res.status === 401 && auth && getAccess()) {
-    const ok = await refreshOnce();
-    if (ok) { headers['Authorization'] = `Bearer ${getAccess()}`; res = await fetch(url, { method, headers, body: body == null ? undefined : (isForm ? body : JSON.stringify(body)) }); }
-    else { localStorage.removeItem('rag_access'); localStorage.removeItem('rag_refresh'); const n = encodeURIComponent(location.pathname + location.search); location.href = `login.html?next=${n}`; throw { status: 401, message: 'Session expired. Please log in.' }; }
+  const m = method.toUpperCase();
+  const useCache = m === 'GET' && (cacheTtl ?? DEFAULT_TTL) > 0;
+  const ttl = cacheTtl ?? DEFAULT_TTL;
+  const key = cacheKey(m, url);
+  if (useCache) {
+    const mem = MEM_CACHE.get(key);
+    if (mem && Date.now() < mem.expiry) return mem.data;
+    if (INFLIGHT.has(key)) return INFLIGHT.get(key);
+    const ss = ssGet(key);
+    if (ss !== null) { MEM_CACHE.set(key, { expiry: Date.now() + Math.min(ttl, 15000), data: ss }); return ss; }
   }
-  if (res.status === 204) return null;
-  let data = null;
-  try { data = await res.json(); } catch { data = null; }
-  if (!res.ok) {
-    const { message, fields } = parseError(res.status, data);
-    const err = { status: res.status, message, fields };
-    throw err;
+  const exec = (async () => {
+    const headers = {};
+    if (!isForm) headers['Content-Type'] = 'application/json';
+    if (auth && getAccess()) headers['Authorization'] = `Bearer ${getAccess()}`;
+    if (botKey) headers['Authorization'] = `Bearer ${botKey}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 30000);
+    if (signal) signal.addEventListener('abort', () => controller.abort());
+    const doFetch = () => fetch(url, { method, headers, signal: controller.signal, body: body == null ? undefined : (isForm ? body : JSON.stringify(body)) });
+    let res;
+    try { res = await doFetch(); }
+    catch (e) { clearTimeout(timer); throw { status: 0, message: e.name === 'AbortError' ? 'Request timed out. Try again.' : 'Network error. Is the backend running?' }; }
+    clearTimeout(timer);
+    if (res.status === 401 && auth && getAccess()) {
+      const ok = await refreshOnce();
+      if (ok) { headers['Authorization'] = `Bearer ${getAccess()}`; res = await fetch(url, { method, headers, body: body == null ? undefined : (isForm ? body : JSON.stringify(body)) }); }
+      else { localStorage.removeItem('rag_access'); localStorage.removeItem('rag_refresh'); const n = encodeURIComponent(location.pathname + location.search); location.href = `login.html?next=${n}`; throw { status: 401, message: 'Session expired. Please log in.' }; }
+    }
+    if (res.status === 204) return null;
+    let data = null;
+    try { data = await res.json(); } catch { data = null; }
+    if (!res.ok) {
+      const { message, fields } = parseError(res.status, data);
+      const err = { status: res.status, message, fields };
+      throw err;
+    }
+    return data;
+  })();
+  if (useCache) {
+    INFLIGHT.set(key, exec);
+    try {
+      const data = await exec;
+      MEM_CACHE.set(key, { expiry: Date.now() + ttl, data });
+      ssSet(key, data, ttl);
+      return data;
+    } finally { INFLIGHT.delete(key); }
   }
-  return data;
+  // Mutations: bust GET cache so later reads never serve stale lists.
+  try { return await exec; }
+  finally { invalidateCache(); }
 }
 
 /** XHR upload with progress (fetch can't report progress). */

@@ -10,7 +10,8 @@ export async function getOrgContext() {
   // Fetch it so role gating (invite/manage buttons) is correct.
   if (org) {
     try {
-      const detail = await apiFetch(ENDPOINTS.members(org.id));
+      // Cached 60s + deduped: repeat calls on one page load cost zero requests.
+      const detail = await apiFetch(ENDPOINTS.members(org.id), { cacheTtl: 60000 });
       if (detail && typeof detail === 'object' && !Array.isArray(detail)) org = { ...org, ...detail };
     } catch { /* keep list version; role falls back below */ }
   }
@@ -37,7 +38,7 @@ export function memberCount(raw) {
   return null;
 }
 export async function getOrgMembers(orgId) {
-  const detail = await apiFetch(ENDPOINTS.members(orgId));
+  const detail = await apiFetch(ENDPOINTS.members(orgId), { cacheTtl: 15000 });
   const list = normalizeMembers(detail);
   return { detail, members: list.length ? list : asList(detail).length ? normalizeMembers(asList(detail)) : list, count: memberCount(detail) };
 }

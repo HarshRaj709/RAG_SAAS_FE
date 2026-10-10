@@ -49,8 +49,9 @@ function kbDocs(detail) {
   return [];
 }
 async function loadKb() {
-  try { kb = await apiFetch(ENDPOINTS.kbDetail(orgId, kbId)); }
-  catch { const l = asList(await apiFetch(ENDPOINTS.kbs(orgId)).catch(() => [])); kb = l.find(x => String(x.id) === String(kbId)) || { id: kbId, name: 'Knowledge Base' }; }
+  try { kb = await apiFetch(ENDPOINTS.kbDetail(orgId, kbId), { cacheTtl: 15000 }); }
+  catch { const l = asList(await apiFetch(ENDPOINTS.kbs(orgId), { cacheTtl: 15000 }).catch(() => [])); kb = l.find(x => String(x.id) === String(kbId)) || { id: kbId, name: 'Knowledge Base' }; }
+  return kb;
 }
 const isFinal = (d) => FINAL_DOC_STATUSES.includes(docStatus(d).toLowerCase());
 function stopPoll(id) {
@@ -72,7 +73,7 @@ function pollDocumentStatus(id) {
     if (inflight.has(key)) { docTimers.set(key, setTimeout(tick, POLL_MS)); return; }
     inflight.add(key);
     try {
-      const fresh = await apiFetch(ENDPOINTS.documentDetail(orgId, kbId, id));
+      const fresh = await apiFetch(ENDPOINTS.documentDetail(orgId, kbId, id), { cacheTtl: 0 });
       inflight.delete(key);
       if (fresh && typeof fresh === 'object') {
         const i = docs.findIndex(d => String(docId(d)) === key);
@@ -95,9 +96,11 @@ function pollDocumentStatus(id) {
   docTimers.set(key, setTimeout(tick, POLL_MS));
 }
 function pollPendingDocs() { docs.filter(d => !isFinal(d)).forEach(d => pollDocumentStatus(docId(d))); }
-async function loadDocs(silent) {
+async function loadDocs(silent, seedDetail) {
   try {
-    const detail = await apiFetch(ENDPOINTS.kbDetail(orgId, kbId));
+    // Reuse the kbDetail already fetched by loadKb() — zero extra requests
+    // on first paint. Only hit network on explicit refresh / polling resume.
+    const detail = seedDetail && typeof seedDetail === 'object' ? seedDetail : await apiFetch(ENDPOINTS.kbDetail(orgId, kbId), { cacheTtl: 0 });
     if (detail && typeof detail === 'object' && !Array.isArray(detail)) kb = { ...kb, ...detail };
     // Preserve locally-known retrying flags across list refresh.
     docs = kbDocs(detail);
@@ -235,4 +238,4 @@ if (dz) {
   dz.addEventListener('drop', (e) => [...e.dataTransfer.files].filter(validFile).forEach(startUpload));
   fp.onchange = () => [...fp.files].filter(validFile).forEach(startUpload);
 }
-await loadDocs();
+await loadDocs(true, kb);

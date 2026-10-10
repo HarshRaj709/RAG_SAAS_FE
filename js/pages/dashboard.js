@@ -19,27 +19,58 @@ async function main() {
       return;
     }
     const [kbs, bots, members] = await Promise.all([
-      apiFetch(ENDPOINTS.kbs(orgId)).then(asList).catch(() => []),
-      apiFetch(ENDPOINTS.bots(orgId)).then(asList).catch(() => []),
+      apiFetch(ENDPOINTS.kbs(orgId), { cacheTtl: 15000 }).then(asList).catch(() => []),
+      apiFetch(ENDPOINTS.bots(orgId), { cacheTtl: 15000 }).then(asList).catch(() => []),
       getOrgMembers(orgId).then(r => r.members).catch(() => []),
     ]);
-    let docs = [], chunks = 0;
-    const kbDocList = (detail) => {
-      if (!detail || typeof detail !== 'object') return [];
-      for (const k of ['documents', 'files', 'docs', 'uploads', 'items']) {
-        if (Array.isArray(detail[k])) return detail[k];
+    // Counts straight from the list payloads — no extra requests needed.
+    const kbDocsArr = (k) => {
+      for (const key of ['documents', 'files', 'docs', 'uploads', 'items']) {
+        if (Array.isArray(k?.[key])) return k[key];
       }
-      return [];
+      return null;
     };
-    for (const kb of kbs.slice(0, 6)) {
-      try {
-        const d = kbDocList(await apiFetch(ENDPOINTS.kbDetail(orgId, kb.id)));
-        docs.push(...d.map(x => ({ ...x, kb: kb.name })));
-        chunks += d.reduce((a, x) => a + (x.chunk_count ?? x.chunks_count ?? (typeof x.chunks === 'number' ? x.chunks : 0)), 0);
+    const kbDocCount = (k) => {
+      for (const key of ['document_count', 'documents_count', 'docs_count', 'doc_count', 'num_documents', 'total_documents', 'count']) {
+        const v = Number(k?.[key]);
+        if (Number.isFinite(v)) return v;
       }
-      catch { /* ignore */ }
-      chunks += kb.total_chunks || 0;
+      return kbDocsArr(k)?.length ?? 0;
+    };
+    const kbChunkCount = (k) => {
+      for (const key of ['total_chunks', 'chunks_count', 'chunk_count', 'total_chunks_count', 'num_chunks', 'total_embeddings']) {
+        const v = Number(k?.[key]);
+        if (Number.isFinite(v)) return v;
+      }
+      return 0;
+    };
+    let docs = [];
+    for (const kb of kbs) docs.push(...(kbDocsArr(kb) || []).map(x => ({ ...x, kb: kb.name })));
+    let chunks = kbs.reduce((a, k) => a + (kbChunkCount(k) || 0), 0);
+    paint(orgs, org, kbs, bots, members, docs, chunks, false);
+    // Phase 2 (background): enrich recent-docs for KBs whose list payload
+    // didn't embed documents. ONE parallel batch — never sequential.
+    const needDetail = kbs.slice(0, 6).filter(k => !kbDocsArr(k) && k?.id);
+    if (needDetail.length) {
+      const details = await Promise.all(
+        needDetail.map(kb => apiFetch(ENDPOINTS.kbDetail(orgId, kb.id), { cacheTtl: 15000 }).catch(() => null)),
+      );
+      const extra = [];
+      for (const d of details) {
+        if (!d || typeof d !== 'object') continue;
+        for (const key of ['documents', 'files', 'docs', 'uploads', 'items']) {
+          if (Array.isArray(d[key])) {
+            const kbName = kbs.find(k => String(k.id) === String(d.id || d.kb_id))?.name || '';
+            extra.push(...d[key].map(x => ({ ...x, kb: kbName })));
+            chunks += d[key].reduce((a, x) => a + (x.chunk_count ?? x.chunks_count ?? (typeof x.chunks === 'number' ? x.chunks : 0)), 0);
+            break;
+          }
+        }
+      }
+      if (extra.length) { docs = [...extra, ...docs]; paint(orgs, org, kbs, bots, members, docs, chunks, true); }
     }
+    return;
+    function paint(orgs, org, kbs, bots, members, docs, chunks, refined) {
     const hasKb = kbs.length > 0, hasDoc = docs.length > 0, hasBot = bots.length > 0;
     const steps = [
       ['Create a knowledge base', hasKb, 'knowledge-bases.html'],
@@ -64,6 +95,7 @@ async function main() {
       <div class="card"><div class="flex between"><h3>Recent bots</h3><a href="bots.html" class="small">View all</a></div>
         ${bots.slice(0, 5).map(b => `<div class="upload-row"><span>🤖</span><span style="flex:1"><strong>${escapeHtml(b.name)}</strong><br><span class="tiny muted mono">${escapeHtml(b.slug || '')}</span></span><a class="btn btn-secondary btn-sm" href="bot.html?id=${b.id}">Open</a></div>`).join('') || '<p class="muted small mt2">No bots yet.</p>'}</div>
     </div>`;
+    }
   } catch (e) {
     if (e === 0) return;
     const p = document.getElementById('page');

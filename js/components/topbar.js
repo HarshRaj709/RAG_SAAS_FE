@@ -3,13 +3,16 @@ import { loadOrgs } from '../router-guard.js';
 import { logout } from '../auth.js';
 import { escapeHtml } from '../utils.js';
 
-export async function mountTopbar() {
+export async function mountTopbar(preloaded) {
   const bar = document.getElementById('topbar');
   if (!bar) return;
   const crumbs = { 'dashboard.html': 'Dashboard', 'knowledge-bases.html': 'Knowledge Bases', 'knowledge-base.html': 'Knowledge Base', 'bots.html': 'Bots', 'bot.html': 'Bot', 'members.html': 'Members', 'settings.html': 'Settings' };
   const page = location.pathname.split('/').pop();
-  let orgs = [], orgId = store.getOrgId();
-  try { ({ orgs, orgId } = await loadOrgs()); } catch { /* offline */ }
+  // Prefer orgs already loaded by guard()/mountShell — zero extra requests.
+  let orgs = preloaded?.orgs || [], orgId = preloaded?.orgId ?? store.getOrgId();
+  if (!preloaded) {
+    try { ({ orgs, orgId } = await loadOrgs()); } catch { /* offline */ }
+  }
   const cur = orgs.find(o => String(o.id) === String(orgId));
   bar.innerHTML = `
     <button class="icon-btn sidebar-toggle" id="sb-toggle" aria-label="Toggle menu">☰</button>
