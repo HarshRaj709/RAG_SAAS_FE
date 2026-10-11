@@ -1,6 +1,14 @@
 import { initTheme, getTheme, setTheme } from '../state.js';
 
 initTheme();
+const navToggle = document.getElementById('nav-toggle');
+const landingLinks = document.getElementById('landing-links');
+if (navToggle && landingLinks) {
+  if (window.matchMedia('(max-width: 900px)').matches) navToggle.style.display = 'inline-grid';
+  matchMedia('(max-width: 900px)').addEventListener?.('change', (e) => { navToggle.style.display = e.matches ? 'inline-grid' : 'none'; if (!e.matches) { landingLinks.classList.remove('open'); navToggle.setAttribute('aria-expanded', 'false'); } });
+  navToggle.onclick = () => { const open = landingLinks.classList.toggle('open'); navToggle.setAttribute('aria-expanded', String(open)); };
+  landingLinks.querySelectorAll('a').forEach(a => a.addEventListener('click', () => { landingLinks.classList.remove('open'); navToggle.setAttribute('aria-expanded', 'false'); }));
+}
 const b = document.getElementById('theme-btn');
 if (b) {
   b.textContent = getTheme() === 'dark' ? '☀️' : '🌙';

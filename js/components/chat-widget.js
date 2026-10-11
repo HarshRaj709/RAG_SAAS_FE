@@ -29,16 +29,16 @@ export function mountChat(el, { slug, getKey, starterQuestions = [] }) {
       <div class="chat-msgs" id="cm" aria-live="polite"></div>
       <div class="starter-chips" id="chips">${starterQuestions.map(q => `<button class="btn btn-secondary btn-sm" data-q="${escapeHtml(q)}">${escapeHtml(q)}</button>`).join('')}</div>
       <div class="chat-input-bar">
-        <textarea id="ci" rows="2" placeholder="Ask about your documents… (Enter to send)" aria-label="Chat message"></textarea>
+        <textarea id="ci" rows="1" placeholder="Ask about your documents…" aria-label="Chat message" enterkeyhint="send"></textarea>
         <button class="btn btn-primary" id="cs">Send</button>
       </div>
-      <div class="tiny muted" style="padding:8px 16px;border-top:1px solid var(--border)">Bot remembers the last 10 messages · session <span class="mono">${sessionId.slice(0, 8)}</span> · <button class="btn btn-ghost btn-sm" id="newchat">New chat</button> · <button class="btn btn-ghost btn-sm" id="copychat">Copy</button></div>
+      <div class="tiny muted chat-foot">Bot remembers the last 10 messages · session <span class="mono">${sessionId.slice(0, 8)}</span> · <button class="btn btn-ghost btn-sm" id="newchat">New chat</button> · <button class="btn btn-ghost btn-sm" id="copychat">Copy</button></div>
     </div>`;
   const box = el.querySelector('#cm'), input = el.querySelector('#ci'), send = el.querySelector('#cs');
   function render() {
     box.innerHTML = msgs.map((m, i) => `
       <div class="msg-row ${m.role === 'user' ? 'me' : ''}">
-        <div style="max-width:78%">
+        <div class="msg-body">
           <div class="chat-bubble ${m.role === 'user' ? 'chat-user' : 'chat-assistant'}">${m.role === 'assistant' ? m.html + (m.streaming ? '<span class="stream-cursor">▍</span>' : '') : escapeHtml(m.text)}</div>
           <div class="msg-meta">${timeAgo(m.at)} ${m.error ? `<button class="btn btn-ghost btn-sm" data-retry="${i}">Retry</button>` : ''}</div>
           ${m.sources?.length ? `<details class="sources"><summary>Sources (${m.sources.length})</summary>${m.sources.map(s => `<div class="src-item">📄 ${escapeHtml(s.filename || s.source || 'chunk')} ${s.score ? `<span class="muted mono">${Number(s.score).toFixed(2)}</span>` : ''}${s.text ? `<div class="small muted">${escapeHtml(String(s.text).slice(0, 220))}…</div>` : ''}</div>`).join('')}</details>` : ''}

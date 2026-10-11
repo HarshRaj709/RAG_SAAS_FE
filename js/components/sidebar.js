@@ -29,7 +29,23 @@ export async function mountShell(active) {
     </aside>
     <div class="main"><header class="topbar" id="topbar"></header><main class="page" id="page"></main></div>`;
   document.getElementById('logout-btn').onclick = logout;
-  if (localStorage.getItem('rag_sidebar') === 'open') document.getElementById('sidebar').classList.add('open');
+  const sidebar = document.getElementById('sidebar');
+  // Scrim for mobile off-canvas sidebar
+  let scrim = document.querySelector('.sidebar-backdrop');
+  if (!scrim) { scrim = document.createElement('div'); scrim.className = 'sidebar-backdrop'; scrim.setAttribute('aria-hidden', 'true'); document.body.appendChild(scrim); }
+  const setOpen = (open) => {
+    sidebar.classList.toggle('open', open);
+    scrim.classList.toggle('show', open);
+    document.body.classList.toggle('no-scroll', open);
+    try { localStorage.setItem('rag_sidebar', open ? 'open' : ''); } catch { /* noop */ }
+  };
+  if (localStorage.getItem('rag_sidebar') === 'open' && window.matchMedia('(min-width: 901px)').matches) sidebar.classList.add('open');
+  scrim.onclick = () => setOpen(false);
+  holder.querySelectorAll('.nav-link').forEach(a => a.addEventListener('click', () => { if (window.innerWidth <= 900) setOpen(false); }));
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') setOpen(false); });
+  // Expose for topbar toggle
+  window.__setSidebarOpen = setOpen;
+  window.__isSidebarOpen = () => sidebar.classList.contains('open');
   const { orgs, orgId } = await loadOrgs().catch(() => ({ orgs: [], orgId: null }));
   return { orgs, orgId };
 }

@@ -15,11 +15,11 @@ export async function mountTopbar(preloaded) {
   }
   const cur = orgs.find(o => String(o.id) === String(orgId));
   bar.innerHTML = `
-    <button class="icon-btn sidebar-toggle" id="sb-toggle" aria-label="Toggle menu">☰</button>
+    <button class="icon-btn sidebar-toggle" id="sb-toggle" aria-label="Toggle menu" aria-expanded="false">☰</button>
     <span class="crumb">Org / ${crumbs[page] || 'App'}</span>
-    <div style="flex:1"></div>
+    <div style="flex:1;min-width:8px"></div>
     <div class="dropdown">
-      <button class="btn btn-secondary btn-sm" id="org-btn" aria-haspopup="listbox">🏢 ${escapeHtml(cur?.name || 'Select org')} ▾</button>
+      <button class="btn btn-secondary btn-sm" id="org-btn" aria-haspopup="listbox" title="${escapeHtml(cur?.name || 'Select org')}">🏢 <span class="org-name">${escapeHtml(cur?.name || 'Select org')}</span> ▾</button>
       <div class="dropdown-menu" id="org-menu" role="listbox">
         ${orgs.map(o => `<button data-org="${o.id}">${escapeHtml(o.name)} ${String(o.id) === String(orgId) ? '✓' : ''}</button>`).join('') || '<div class="small muted" style="padding:8px 12px">No organizations</div>'}
         <button data-new-org style="border-top:1px solid var(--border);color:var(--primary)">+ Create organization</button>
@@ -33,7 +33,11 @@ export async function mountTopbar(preloaded) {
   document.getElementById('user-btn').onclick = (e) => { e.stopPropagation(); toggle('user-menu'); };
   document.addEventListener('click', () => document.querySelectorAll('.dropdown-menu').forEach(x => x.classList.remove('open')));
   document.getElementById('theme-btn').onclick = (e) => { const n = getTheme() === 'dark' ? 'light' : 'dark'; setTheme(n); e.currentTarget.textContent = n === 'dark' ? '☀️' : '🌙'; };
-  document.getElementById('sb-toggle').onclick = () => { const s = document.getElementById('sidebar'); s.classList.toggle('open'); localStorage.setItem('rag_sidebar', s.classList.contains('open') ? 'open' : ''); };
+  document.getElementById('sb-toggle').onclick = (e) => {
+    const s = document.getElementById('sidebar');
+    if (window.__setSidebarOpen) { const next = !s.classList.contains('open'); window.__setSidebarOpen(next); e.currentTarget.setAttribute('aria-expanded', String(next)); }
+    else { s.classList.toggle('open'); }
+  };
   document.getElementById('u-logout').onclick = logout;
   document.getElementById('u-settings').onclick = () => location.href = 'settings.html';
   bar.querySelectorAll('[data-org]').forEach(b => b.onclick = () => { store.setOrgId(b.dataset.org); location.reload(); });
