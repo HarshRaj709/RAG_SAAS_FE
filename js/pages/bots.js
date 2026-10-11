@@ -2,9 +2,9 @@ import { initTheme, store } from '../state.js';
 import { guard } from '../router-guard.js';
 import { getOrgContext, currentRole } from '../components/org-switcher.js';
 import { apiFetch, asList } from '../api.js';
-import { ENDPOINTS } from '../config.js';
+import { ENDPOINTS, BOT_DOMAINS_FIELD } from '../config.js';
 import { toast, openModal, skeletonList, emptyState, setFieldError, copyTextFallback } from '../ui.js';
-import { escapeHtml, formatDate, debounce, copyText } from '../utils.js';
+import { escapeHtml, formatDate, debounce, copyText, normalizeDomain, isValidDomain } from '../utils.js';
 initTheme();
 await guard('bots.html');
 const { orgId, org } = await getOrgContext();
@@ -38,7 +38,7 @@ function render() {
 function openWizard() {
   if (!canManage) { toast('Only owners and admins can do this.', 'error'); return; }
   if (!kbs.length) { toast('Create a knowledge base first.', 'error'); location.href = 'knowledge-bases.html'; return; }
-  let step = 1, draft = { name: '', description: '', kb_ids: [], system_prompt: '', temperature: 0.2, max_tokens: 512 };
+  let step = 1, draft = { name: '', description: '', kb_ids: [], system_prompt: '', temperature: 0.2, max_tokens: 512, allowed_domains: [] };
   const { el, close } = openModal(`<div class="modal-head"><h3>Create bot</h3><button class="icon-btn" data-close>✕</button></div><div class="modal-body" id="wz"></div>`, { wide: true });
   const body = el.querySelector('#wz');
   function draw() {
@@ -76,12 +76,13 @@ function openWizard() {
     if (step === 3) {
       s.innerHTML = `<div class="field"><label for="wsp">System prompt</label><textarea id="wsp" rows="4" placeholder="Answer only using provided context.">${escapeHtml(draft.system_prompt)}</textarea><div class="hint">Guides how the bot answers. Optional.</div></div>
       <div class="grid grid-2"><div class="field"><label for="wt">Temperature: <span id="tv">${draft.temperature}</span></label><input id="wt" type="range" min="0" max="1" step="0.1" value="${draft.temperature}"><div class="hint">Lower = focused, higher = creative.</div></div>
-      <div class="field"><label for="wmt">Max tokens</label><input id="wmt" type="number" min="1" max="4096" step="1" value="${draft.max_tokens}"><div class="hint">Max reply length.</div></div></div>`;
+      <div class="field"><label for="wmt">Max tokens</label><input id="wmt" type="number" min="1" max="4096" step="1" value="${draft.max_tokens}"><div class="hint">Max reply length.</div></div></div>
+      <div class="field"><label for="wdoms">Allowed domains <span class="muted" style="font-weight:400">(optional)</span></label><textarea id="wdoms" rows="2" placeholder="mysite.com&#10;www.mysite.com" inputmode="url">${escapeHtml(draft.allowed_domains.join('\n'))}</textarea><div class="hint">Add your website domains that may call this bot. One hostname per line — <span class="mono">mysite.com</span>, <span class="mono">www.mysite.com</span>. Subdomains must be listed separately; <span class="mono">*.example.com</span> is not supported. Leave empty to block all your sites (only our dashboard can reach the bot until you add a domain).</div><div class="error"></div></div>`;
       const wt = s.querySelector('#wt');
       wt.oninput = () => { s.querySelector('#tv').textContent = wt.value; };
     }
     if (step === 4) s.innerHTML = `<div class="card"><h4>${escapeHtml(draft.name || '(unnamed)')}</h4><p class="small muted">${escapeHtml(draft.description || 'No description')}</p><div class="mt1" style="display:flex;gap:6px;flex-wrap:wrap">${draft.kb_ids.map(id => `<span class="chip">${escapeHtml(kbName(id))}</span>`).join('')}</div>
-      <div class="small muted mt2">Temperature <span class="mono">${draft.temperature}</span> · Max tokens <span class="mono">${draft.max_tokens}</span>${draft.system_prompt ? `<br>System prompt: “${escapeHtml(draft.system_prompt.slice(0, 120))}${draft.system_prompt.length > 120 ? '…' : ''}”` : ''}</div></div>`;
+      <div class="small muted mt2">Temperature <span class="mono">${draft.temperature}</span> · Max tokens <span class="mono">${draft.max_tokens}</span>${draft.system_prompt ? `<br>System prompt: “${escapeHtml(draft.system_prompt.slice(0, 120))}${draft.system_prompt.length > 120 ? '…' : ''}”` : ''}${draft.allowed_domains.length ? `<br>Allowed domains: ${draft.allowed_domains.map(d => `<span class="mono">${escapeHtml(d)}</span>`).join(', ')}` : '<br>Allowed domains: none — only our dashboard can reach the bot'}</div></div>`;
     body.querySelector('#wb').onclick = () => { if (step > 1) { step--; draw(); } };
     body.querySelector('#wn').onclick = async (e) => {
       const nextBtn = e.currentTarget;
@@ -91,13 +92,21 @@ function openWizard() {
         draft.system_prompt = body.querySelector('#wsp').value.trim();
         draft.temperature = Math.min(1, Math.max(0, Number(body.querySelector('#wt').value) || 0));
         draft.max_tokens = Math.min(4096, Math.max(1, parseInt(body.querySelector('#wmt').value, 10) || 512));
+        const rawLines = body.querySelector('#wdoms').value.split('\n').map(x => x.trim()).filter(Boolean);
+        const wild = rawLines.filter(x => x.includes('*'));
+        if (wild.length) { toast(`Wildcards are not allowed (${wild.join(', ')}) — enter each subdomain separately.`, 'error'); return; }
+        const rawDoms = rawLines.map(x => normalizeDomain(x)).filter(Boolean);
+        const bad = rawDoms.filter(d => !isValidDomain(d));
+        if (bad.length) { toast(`Invalid domain(s): ${bad.join(', ')} — use bare hostnames like mysite.com`, 'error'); return; }
+        draft.allowed_domains = [...new Set(rawDoms)];
       }
       if (step < 4) { step++; draw(); return; }
       nextBtn.disabled = true; nextBtn.innerHTML = `<span class="spinner"></span> Creating…`;
       try {
-        // 1. Create has NO KB field — only name (+ optional settings).
+        // POST /api/chat/orgs/<org>/bots/ {name, allowed_domains?} (+ existing optional settings).
         const payload = { name: draft.name, system_prompt: draft.system_prompt, temperature: draft.temperature, max_tokens: draft.max_tokens };
         if (draft.description) payload.description = draft.description;
+        if (draft.allowed_domains.length) payload[BOT_DOMAINS_FIELD] = draft.allowed_domains;
         const created = await apiFetch(ENDPOINTS.bots(orgId), { method: 'POST', body: payload });
         const botId = created.id || created.pk || created.uuid;
         // 2. Attach KBs via PATCH {kb_ids} (must belong to same org).
@@ -115,7 +124,10 @@ function openWizard() {
         if (attachWarn) toast(attachWarn, 'error'); else toast('Bot created with KBs attached', 'success');
         load();
       } catch (err) {
-        toast(err.message || 'Bot creation failed', 'error');
+        const detail = err?.fields?.[BOT_DOMAINS_FIELD] ? ` — ${err.fields[BOT_DOMAINS_FIELD]}` : '';
+        toast((err.message || 'Bot creation failed') + detail, 'error');
+        // Backend 400 on allowed_domains (e.g. wildcard) → jump back to step 3 to fix.
+        if (err?.fields?.[BOT_DOMAINS_FIELD] || /allowed_domains|wildcard/i.test(err.message || '')) { step = 3; draw(); return; }
         nextBtn.disabled = false; nextBtn.textContent = 'Create bot';
       }
     };

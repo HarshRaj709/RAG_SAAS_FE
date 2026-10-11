@@ -14,7 +14,11 @@ Or use VS Code Live Server.
 
 ## Change API base URL
 
-Edit `js/config.js` → `API_BASE_URL`, or override at runtime in Settings → API base (stored in `localStorage.rag_api_base`). All endpoint paths live in `ENDPOINTS` in the same file — fix them there to match the Postman docs. Items marked `// TODO(verify)` are uncertain: token refresh, invite shapes, regenerate-key, public chat path.
+Edit `js/config.js` → `API_BASE_URL`. Single source of truth — no runtime override.
+
+## Bot allowed domains (website whitelist)
+
+Per-bot, owner user-JWT (not bot key): **Bots → open bot → Overview → Allowed domains**, or set at creation (wizard step 3, Settings). One bare hostname per line (`mysite.com`, `www.mysite.com` — each subdomain separately). Scheme/ports are normalized automatically; wildcards (`*.example.com`) return 400. Sent as `allowed_domains` via `GET` (read) / `PATCH` (update) `/api/chat/orgs/<org_uuid>/bots/<bot_uuid>/` and `POST /api/chat/orgs/<org_uuid>/bots/` at creation. Only `kb_ids` + `allowed_domains` are PATCH-writable.
 
 Set `USE_MOCK = true` in `config.js` to demo the UI offline with fake data.
 

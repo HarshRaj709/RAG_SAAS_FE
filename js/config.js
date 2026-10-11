@@ -1,4 +1,5 @@
 /** Central API configuration. Edit ONLY here when backend paths differ. */
+try { localStorage.removeItem('rag_api_base'); } catch { /* ignore — stale override from removed Settings UI */ }
 export const API_BASE_URL = (localStorage.getItem('rag_api_base') || 'https://rag-chat-bot-5yva.onrender.com/').trim().replace(/\/+$/, '');
 export const USE_MOCK = false; // set true to demo UI offline with fake data
 /** Google OAuth client ID. Paste your Web client ID here, or set localStorage 'rag_google_cid'. Empty = Google buttons hidden. */
@@ -36,5 +37,6 @@ export const ENDPOINTS = {
   // Public chat — verified pattern from plan; alt: /api/bots/{id}/chat/
   publicChat: (slug) => `/api/chat/bot/${slug}/chat/`, // TODO(verify) against Postman
 };
+export const BOT_DOMAINS_FIELD = 'allowed_domains';
 export const FINAL_DOC_STATUSES = ['completed', 'complete', 'done', 'ready', 'indexed', 'processed', 'success', 'succeeded', 'failed', 'error', 'errored'];
 export const MAX_DOC_POLLS = 30; // ~2 min at POLL_MS; then polling stops with a manual Refresh

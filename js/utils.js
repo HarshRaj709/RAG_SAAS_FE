@@ -8,3 +8,19 @@ export async function copyText(t) { try { await navigator.clipboard.writeText(t)
 export function uuid() { return crypto.randomUUID ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 3 | 8)).toString(16); }); }
 export function initials(name = '?') { return name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase(); }
 export const qp = (k, d = '') => new URLSearchParams(location.search).get(k) ?? d;
+/** Normalize a user-entered site into a bare hostname (no protocol/path/port). Returns '' if empty. */
+export function normalizeDomain(raw = '') {
+  let s = String(raw || '').trim().toLowerCase();
+  if (!s) return '';
+  s = s.replace(/^[a-z]+:\/\//, ''); // strip scheme
+  s = s.split('/')[0].split('?')[0].split('#')[0]; // strip path/query
+  s = s.split('@').pop(); // strip userinfo
+  s = s.split(':')[0]; // strip port
+  s = s.replace(/^\.+|\.+$/g, '');
+  return s;
+}
+/** Bare-hostname validation: e.g. example.com, sub.example.co.uk, localhost. No scheme/path. */
+export function isValidDomain(d = '') {
+  if (d === 'localhost') return true;
+  return /^(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))*\.[a-z]{2,}$/.test(d);
+}

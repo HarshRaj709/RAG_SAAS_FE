@@ -2,9 +2,9 @@ import { initTheme, store } from '../state.js';
 import { guard } from '../router-guard.js';
 import { getOrgContext, currentRole } from '../components/org-switcher.js';
 import { apiFetch, asList } from '../api.js';
-import { ENDPOINTS, API_BASE_URL } from '../config.js';
+import { ENDPOINTS, API_BASE_URL, BOT_DOMAINS_FIELD } from '../config.js';
 import { toast, confirmDialog, skeletonList, emptyState, openModal, copyTextFallback } from '../ui.js';
-import { escapeHtml, copyText, qp, formatDate } from '../utils.js';
+import { escapeHtml, copyText, qp, formatDate, normalizeDomain, isValidDomain } from '../utils.js';
 import { mountChat } from '../components/chat-widget.js';
 import { showKeyModal } from './bots.js';
 initTheme();
@@ -28,6 +28,25 @@ page.innerHTML = `
   <div id="tc"></div>`;
 const tc = document.getElementById('tc');
 function switchTab(t) { tab = t; history.replaceState(null, '', `?id=${botId}&tab=${t}`); page.querySelectorAll('[data-tab]').forEach(x => x.setAttribute('aria-selected', x.dataset.tab === t)); draw(); }
+/** Read the whitelist (GET detail & list both include `allowed_domains`). Owner user-JWT. */
+function getDomains(b) {
+  const v = b?.[BOT_DOMAINS_FIELD];
+  if (!Array.isArray(v)) return [];
+  return v.map(x => normalizeDomain(typeof x === 'string' ? x : '')).filter(Boolean);
+}
+/** PATCH {allowed_domains} — only `kb_ids` + `allowed_domains` are writable.
+ *  Uses the owner's user-JWT (default auth), never the bot key. */
+function saveDomains(domains) {
+  return apiFetch(ENDPOINTS.botDetail(orgId, botId), { method: 'PATCH', body: { [BOT_DOMAINS_FIELD]: domains } });
+}
+/** Shared client-side check matching backend rules: bare hostnames, no wildcards. */
+function domainError(raw) {
+  if (String(raw).includes('*')) return 'Wildcards (*.example.com) are not allowed — enter each subdomain separately (mysite.com, www.mysite.com).';
+  const d = normalizeDomain(raw);
+  if (!d) return 'Enter a domain like example.com';
+  if (!isValidDomain(d)) return `"${d}" is not a valid hostname. Use a bare domain like example.com (no http://, no path).`;
+  return '';
+}
 page.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => switchTab(b.dataset.tab));
 function draw() {
   if (tab === 'overview') {
@@ -40,7 +59,46 @@ function draw() {
       ${canManage ? `<button class="btn btn-secondary btn-sm" id="edit-kb">Edit linked KBs</button>` : `<p class="tiny muted">🔒 Only owners/admins can edit.</p>`}</div>
       <div class="card"><h3>API key</h3><p class="small muted">Raw keys are shown once at creation. Paste yours in the Playground to test.</p>
       ${canManage ? `<button class="btn btn-secondary btn-sm mt1" id="regen">Regenerate key</button>` : ''}</div></div>
+      <div class="card mt3"><h3>Allowed domains</h3>
+        <p class="small muted">Add your website domains that may call this bot. One hostname per line — <span class="mono">mysite.com</span>, <span class="mono">www.mysite.com</span>. Subdomains must be listed separately; <span class="mono">*.example.com</span> is not supported. Leave empty to block all your sites (only our dashboard can reach the bot until you add a domain).</p>
+        <div class="mt2" id="dom-list" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+        ${canManage ? `<div class="field mt2"><label for="dom-in">Add a domain</label><div class="flex"><input id="dom-in" placeholder="mysite.com" inputmode="url" autocomplete="off" style="flex:1;min-width:0;padding:10px 14px;border:1px solid var(--border);border-radius:10px;background:var(--bg);color:var(--text)"><button class="btn btn-secondary btn-sm" id="dom-add">Add</button></div><div class="hint">Bare hostname only — no <span class="mono">http://</span>, no path, no wildcards (<span class="mono">*.example.com</span> is rejected).</div><div class="error" id="dom-err" style="display:none;color:var(--danger);font-size:12px"></div></div>
+        <div class="flex" style="flex-wrap:wrap"><button class="btn btn-primary btn-sm" id="dom-save">Save domains</button><button class="btn btn-ghost btn-sm" id="dom-clear">Clear all</button></div>`
+        : `<p class="tiny muted mt1">🔒 Only owners/admins can edit.</p>`}</div>
       ${canManage ? `<div class="danger-zone"><h3> Danger zone</h3><div class="flex between mt1"><span class="small">Delete this bot permanently.</span><button class="btn btn-danger btn-sm" id="del">Delete bot</button></div></div>` : ''}`;
+    // ---- Allowed-domains editor (local draft, saved via PATCH) ----
+    let draftDoms = getDomains(bot);
+    const domList = tc.querySelector('#dom-list');
+    const paintDoms = () => {
+      if (!domList) return;
+      domList.innerHTML = draftDoms.length
+        ? draftDoms.map(d => `<span class="chip">${escapeHtml(d)}${canManage ? ` <button class="icon-btn btn-sm" data-rm="${escapeHtml(d)}" aria-label="Remove ${escapeHtml(d)}" style="min-width:0;min-height:0;padding:0 4px">✕</button>` : ''}</span>`).join('')
+        : '<span class="muted small">No domains yet — only our dashboard can reach this bot until you add one.</span>';
+      domList.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { draftDoms = draftDoms.filter(x => x !== b.dataset.rm); paintDoms(); });
+    };
+    paintDoms();
+    const domIn = tc.querySelector('#dom-in'), domErr = tc.querySelector('#dom-err');
+    tc.querySelector('#dom-add')?.addEventListener('click', () => {
+      const err = domainError(domIn.value);
+      if (err) { domErr.style.display = 'block'; domErr.textContent = err; return; }
+      const d = normalizeDomain(domIn.value);
+      if (draftDoms.includes(d)) { domErr.style.display = 'block'; domErr.textContent = 'That domain is already listed.'; return; }
+      domErr.style.display = 'none'; draftDoms.push(d); domIn.value = ''; paintDoms(); domIn.focus();
+    });
+    domIn?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); tc.querySelector('#dom-add').click(); } });
+    tc.querySelector('#dom-clear')?.addEventListener('click', () => { draftDoms = []; paintDoms(); });
+    tc.querySelector('#dom-save')?.addEventListener('click', async (e) => {
+      const btn = e.currentTarget; btn.disabled = true; btn.innerHTML = `<span class="spinner"></span> Saving…`;
+      try {
+        bot = await saveDomains(draftDoms);
+        draftDoms = getDomains(bot);
+        paintDoms();
+        toast(draftDoms.length ? `Allowed domains saved (${draftDoms.length})` : 'Allowed domains cleared — only our dashboard can reach this bot', 'success');
+      } catch (err) {
+        const detail = err?.fields?.[BOT_DOMAINS_FIELD] ? ` — ${err.fields[BOT_DOMAINS_FIELD]}` : '';
+        toast((err.message || 'Could not save domains') + detail, 'error');
+      } finally { btn.disabled = false; btn.textContent = 'Save domains'; }
+    });
     tc.querySelector('[data-c]')?.addEventListener('click', async (e) => { await copyText(e.target.dataset.c); toast('Copied', 'success'); });
     document.getElementById('edit-kb')?.addEventListener('click', () => {
       const cur = new Set(linked.map(kbIdOf));
@@ -68,6 +126,7 @@ function draw() {
     const js = `const res = await fetch('${endpoint}', {\n  method: 'POST',\n  headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer YOUR_API_KEY' },\n  body: JSON.stringify({ query: 'Hello!', session_id: crypto.randomUUID() })\n});\nconst data = await res.json(); // { answer, sources }`;
     const py = `import requests\nr = requests.post('${endpoint}',\n  headers={'Authorization': 'Bearer YOUR_API_KEY'},\n  json={'query': 'Hello!', 'session_id': 'uuid-here'})\nprint(r.json()['answer'])`;
     tc.innerHTML = `<div class="alert alert-warning">🔒 <strong>Security:</strong> never expose the bot API key in public frontend code — proxy through your backend.</div>
+    <div class="alert alert-info mt2">🌐 Browser calls are only accepted from this bot's <strong>Allowed domains</strong> (Overview tab). <span class="mono">curl</span> / server-to-server calls are unaffected. <a href="bot.html?id=${botId}&tab=overview">Manage domains →</a></div>
     <div class="card mt2"><h3>Request format</h3><p class="small muted"><span class="mono">POST ${escapeHtml(endpoint)}</span> · header <span class="mono">Authorization: Bearer &lt;bot_api_key&gt;</span> · body <span class="mono">{"query", "session_id"}</span>. <span class="mono">session_id</span> is a UUID per conversation; the server remembers the last 10 messages.</p>
     <div class="tabs mt2"><button class="tab" aria-selected="true" data-s="curl">cURL</button><button class="tab" aria-selected="false" data-s="js">JavaScript</button><button class="tab" aria-selected="false" data-s="py">Python</button></div>
     <pre class="code-block" id="sn"></pre>
