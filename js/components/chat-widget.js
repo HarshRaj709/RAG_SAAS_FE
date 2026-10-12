@@ -19,8 +19,12 @@ function pullObjects(buf) {
   return { out, rest: start !== -1 ? buf.slice(start) : '' };
 }
 
-/** Full chat playground (streaming). mount(el, {slug, getKey}) */
-export function mountChat(el, { slug, getKey, starterQuestions = [] }) {
+/** Full chat playground (streaming). mount(el, {slug, getKey} | {url, auth:'jwt'})
+ *  - botKey mode (default): POST url (default publicChat(slug)) with
+ *    `Authorization: Bearer <bot_api_key>` from getKey(). Used by external embeds.
+ *  - jwt mode: POST url (caller passes botTestChat url) with the logged-in
+ *    user JWT (`rag_access`). Used by the dashboard playground. */
+export function mountChat(el, { slug, getKey, url, auth = 'botKey', starterQuestions = [] }) {
   let sessionId = uuid();
   let loading = false, streaming = false, streamCtrl = null;
   const msgs = [];
@@ -56,16 +60,25 @@ export function mountChat(el, { slug, getKey, starterQuestions = [] }) {
     msgs.push({ role: 'assistant', text: '', html: `<span style="color:var(--danger)">⚠️ ${escapeHtml(hint)}</span>`, error: true, at: new Date().toISOString() });
   }
   function errHint(status, message) {
-    if (status === 401 || status === 403) return 'Invalid API key.';
-    if (status === 404) return 'Bot not found.';
+    if (status === 401 || status === 403) return auth === 'jwt' ? 'Session expired — please log in again.' : 'Invalid API key.';
+    if (status === 404) return auth === 'jwt' ? 'Bot not found in this org.' : 'Bot not found.';
     if (status === 429) return 'Rate limited — wait and retry.';
     return message || `Request failed (${status})`;
   }
   async function doSend(text) {
     text = (text ?? input.value).trim();
     if (!text || loading || streaming) return;
-    const key = getKey();
-    if (!key) { toast('Paste your bot API key above to test.', 'error'); return; }
+    const chatUrl = url || (API_BASE_URL + ENDPOINTS.publicChat(slug));
+    const headers = { 'Content-Type': 'application/json' };
+    if (auth === 'jwt') {
+      const tok = localStorage.getItem('rag_access');
+      if (!tok) { toast('Session expired — please log in again.', 'error'); return; }
+      headers['Authorization'] = `Bearer ${tok}`;
+    } else {
+      const key = getKey();
+      if (!key) { toast('Paste your bot API key above to test.', 'error'); return; }
+      headers['Authorization'] = `Bearer ${key}`;
+    }
     input.value = '';
     msgs.push({ role: 'user', text, at: new Date().toISOString() });
     loading = true; render();
@@ -74,9 +87,9 @@ export function mountChat(el, { slug, getKey, starterQuestions = [] }) {
     // Give the stream up to 5 min; no per-chunk timeout.
     const killer = setTimeout(() => streamCtrl.abort('timeout'), 5 * 60 * 1000);
     try {
-      const res = await fetch(API_BASE_URL + ENDPOINTS.publicChat(slug), {
+      const res = await fetch(chatUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+        headers,
         body: JSON.stringify({ query: text, session_id: sessionId }),
         signal: streamCtrl.signal,
       });

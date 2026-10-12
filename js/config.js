@@ -34,8 +34,10 @@ export const ENDPOINTS = {
   bots: (id) => `/api/chat/orgs/${id}/bots/`,
   botDetail: (orgId, botId) => `/api/chat/orgs/${orgId}/bots/${botId}/`,
   regenerateKey: (orgId, botId) => `/api/chat/orgs/${orgId}/bots/${botId}/keys/rotate/`, // POST: rotates key, raw key returned once
-  // Public chat — verified pattern from plan; alt: /api/bots/{id}/chat/
+  // Public chat — customer-facing, bot secret key in Authorization header.
   publicChat: (slug) => `/api/chat/bot/${slug}/chat/`, // TODO(verify) against Postman
+  // Internal test chat — dashboard playground only, owner/member user-JWT.
+  botTestChat: (orgId, botId) => `/api/chat/orgs/${orgId}/bots/${botId}/test-chat/`,
 };
 export const BOT_DOMAINS_FIELD = 'allowed_domains';
 export const FINAL_DOC_STATUSES = ['completed', 'complete', 'done', 'ready', 'indexed', 'processed', 'success', 'succeeded', 'failed', 'error', 'errored'];

@@ -136,13 +136,10 @@ function draw() {
     tc.querySelectorAll('[data-s]').forEach(b => b.onclick = () => { tc.querySelectorAll('[data-s]').forEach(x => x.setAttribute('aria-selected', 'false')); b.setAttribute('aria-selected', 'true'); sn.textContent = map[b.dataset.s]; });
   }
   if (tab === 'playground') {
-    tc.innerHTML = `<div class="card"><h3>Playground</h3><p class="small muted">Paste your bot API key to test. It is kept only in <span class="mono">sessionStorage</span> for this tab — never localStorage — because raw keys can't be retrieved after creation.</p>
-    <div class="field mt1"><label>Bot API key</label><div class="flex"><input id="bk" type="password" placeholder="rag_…" autocomplete="off" style="flex:1;padding:10px 14px;border:1px solid var(--border);border-radius:10px;background:var(--bg);color:var(--text)"><button class="btn btn-secondary btn-sm" id="bks">Save for session</button></div></div>
+    // Internal test chat: user-JWT auth, no bot API key needed.
+    tc.innerHTML = `<div class="card"><h3>Playground</h3><p class="small muted">Internal test chat — sends with your login session, no API key needed.</p>
     <div id="chat"></div></div>`;
-    const inp = tc.querySelector('#bk');
-    inp.value = sessionStorage.getItem('play_' + botId) || '';
-    tc.querySelector('#bks').onclick = () => { sessionStorage.setItem('play_' + botId, inp.value.trim()); toast(inp.value.trim() ? 'Key saved for this tab session' : 'Key cleared', 'info'); };
-    mountChat(tc.querySelector('#chat'), { slug: bot.slug, getKey: () => tc.querySelector('#bk').value.trim() || sessionStorage.getItem('play_' + botId) || '', starterQuestions: ['What documents do you know about?', 'Summarize the refund policy.', 'How do I get started?'] });
+    mountChat(tc.querySelector('#chat'), { url: API_BASE_URL + ENDPOINTS.botTestChat(orgId, botId), auth: 'jwt', starterQuestions: ['What documents do you know about?', 'Summarize the refund policy.', 'How do I get started?'] });
   }
   if (tab === 'usage') tc.innerHTML = `<div class="card"><h3>Usage</h3><p class="muted">Per-key usage tracking is <span class="badge b-pending">Coming soon</span>.</p></div>`;
 }
