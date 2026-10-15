@@ -4,7 +4,7 @@ import { getOrgContext, currentRole } from '../components/org-switcher.js';
 import { apiFetch, asList, uploadWithProgress } from '../api.js';
 import { ENDPOINTS, ACCEPTED_EXTS, MAX_FILE_MB, POLL_MS, FINAL_DOC_STATUSES } from '../config.js';
 import { toast, confirmDialog, skeletonList, emptyState, openModal } from '../ui.js';
-import { escapeHtml, timeAgo, formatBytes, qp } from '../utils.js';
+import { escapeHtml, timeAgo, formatBytes, qp, debounce } from '../utils.js';
 initTheme();
 await guard('knowledge-bases.html');
 const { orgId, org } = await getOrgContext();
@@ -47,6 +47,179 @@ function kbDocs(detail) {
     if (Array.isArray(detail[k])) return detail[k];
   }
   return [];
+}
+/* ================= Website URL discovery =================
+ * Two-step flow: POST {root_url} -> discover/ returns the site's available
+ * pages, user picks the ones to scrape. Step 2 (scraping the selected URLs)
+ * is not wired to the backend yet, so "Add selected" is a UI-only action.
+ */
+const DISCOVER_PANEL_HTML = `
+  <div class="discover">
+    <div class="discover-intro">
+      <p class="small">Point us at a website and we'll discover the pages that can be added to this knowledge base. Pick the ones you need — nothing is scraped until you confirm.</p>
+    </div>
+    <div class="url-row">
+      <div class="url-input"><span aria-hidden="true">🔗</span><input id="root-url" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://docs.example.com"></div>
+      <button class="btn btn-primary" id="discover-btn"><span class="disc-ico" aria-hidden="true">🌐</span> Discover pages</button>
+    </div>
+    <p class="tiny muted mt1" id="disc-hint">Works best on public docs or help-center sites. Sub-pages of the same host are included.</p>
+    <div id="disc-result" class="mt2" aria-live="polite"></div>
+  </div>`;
+
+/* ---------- discovery response normalizers (backend key names vary) ---------- */
+function normalizeRootUrl(raw) {
+  let s = String(raw || '').trim();
+  if (!s) return '';
+  if (!/^https?:\/\//i.test(s)) s = `https://${s}`;
+  try {
+    const u = new URL(s);
+    if (!u.hostname.includes('.')) return '';
+    return `${u.origin}${u.pathname.replace(/\/+$/, '')}`;
+  } catch { return ''; }
+}
+const pageUrl = (p) => (typeof p === 'string' ? p : (p.url || p.link || p.href || p.path || ''));
+const pageTitle = (p) => (typeof p === 'string' ? '' : (p.title || p.name || p.label || ''));
+const pageDepth = (p) => (typeof p === 'string' ? null : (p.depth ?? p.level ?? null));
+function discoverPages(res) {
+  if (Array.isArray(res)) return res;
+  if (res && typeof res === 'object') {
+    for (const k of ['pages', 'urls', 'links', 'results', 'data', 'items', 'sitemap']) if (Array.isArray(res[k])) return res[k];
+  }
+  return [];
+}
+/* ---------- state ---------- */
+let discovered = [];      // normalized {url, title, depth}
+const picked = new Set(); // selected urls
+let rootUrl = '';
+let discLoading = false;
+let discQuery = '';
+
+function renderDiscoverIdle() {
+  const w = document.getElementById('disc-result');
+  if (!w) return;
+  w.innerHTML = `<div class="disc-empty">${emptyState('🔍', 'No search yet', rootUrl ? `Pages will appear here once you discover <span class="mono">${escapeHtml(rootUrl)}</span>.` : 'Enter a website URL above to see the pages we can add.', '')}</div>`;
+}
+function renderDiscoverLoading() {
+  const w = document.getElementById('disc-result');
+  if (!w) return;
+  w.innerHTML = `<div class="disc-status"><span class="spinner dark"></span><div><strong>Crawling ${escapeHtml(rootUrl)}…</strong><div class="tiny muted">Scanning the site for public pages. This can take a few seconds.</div></div></div>
+    <div class="mt2">${skeletonList(2)}</div>`;
+}
+function renderDiscoverError(msg) {
+  const w = document.getElementById('disc-result');
+  if (!w) return;
+  w.innerHTML = `<div class="alert alert-danger disc-error"><span>⚠️</span><div><strong>Discovery failed</strong><div class="tiny">${escapeHtml(msg)}</div></div><button class="btn btn-secondary btn-sm" id="disc-retry">Retry</button></div>`;
+  w.querySelector('#disc-retry').onclick = () => runDiscover();
+}
+function visiblePages() {
+  const q = discQuery.trim().toLowerCase();
+  if (!q) return discovered;
+  return discovered.filter(p => `${p.title} ${p.url}`.toLowerCase().includes(q));
+}
+function renderDiscoverResults() {
+  const w = document.getElementById('disc-result');
+  if (!w) return;
+  const list = visiblePages();
+  const allOn = list.length > 0 && list.every(p => picked.has(p.url));
+  w.innerHTML = `
+    <div class="disc-bar">
+      <div class="disc-bar-info">
+        <strong>${discovered.length} page${discovered.length === 1 ? '' : 's'} found</strong>
+        <span class="tiny muted">· ${picked.size} selected</span>
+        <span class="chip disc-root" title="${escapeHtml(rootUrl)}">${escapeHtml(rootUrl)}</span>
+      </div>
+      <div class="disc-bar-actions">
+        <div class="search-input disc-search"><span>🔍</span><input id="disc-filter" placeholder="Filter pages…" value="${escapeHtml(discQuery)}"></div>
+        <button class="btn btn-ghost btn-sm" id="disc-toggle-all">${allOn ? 'Clear all' : 'Select all'}</button>
+        <button class="btn btn-ghost btn-sm" id="disc-rediscover">↻ Rescan</button>
+      </div>
+    </div>
+    ${list.length ? `<div class="disc-list" role="group" aria-label="Discovered pages">${list.map(p => `
+      <label class="page-pick${picked.has(p.url) ? ' selected' : ''}">
+        <input type="checkbox" data-url="${escapeHtml(p.url)}" ${picked.has(p.url) ? 'checked' : ''}>
+        <span class="page-ico" aria-hidden="true">📄</span>
+        <span class="page-meta">
+          <span class="page-title">${escapeHtml(p.title || p.url.split('/').filter(Boolean).pop() || p.url)}</span>
+          <span class="page-url tiny muted mono" title="${escapeHtml(p.url)}">${escapeHtml(p.url)}</span>
+        </span>
+        ${p.depth != null ? `<span class="chip depth-chip">L${p.depth}</span>` : ''}
+        <a class="icon-btn" href="${escapeHtml(p.url)}" target="_blank" rel="noopener noreferrer" title="Open in new tab" aria-label="Open ${escapeHtml(p.url)} in new tab">↗</a>
+      </label>`).join('')}</div>`
+      : `<div class="disc-none">${emptyState('🕳️', 'No matches', `No discovered page matches “${escapeHtml(discQuery)}”.`, '')}</div>`}
+    <div class="disc-foot">
+      <span class="tiny muted">${picked.size ? `${picked.size} page${picked.size === 1 ? '' : 's'} ready to scrape` : 'Select at least one page to continue'}</span>
+      <div class="flex" style="gap:10px">
+        <button class="btn btn-secondary btn-sm" data-close>Cancel</button>
+        <button class="btn btn-primary btn-sm" id="disc-add" ${picked.size ? '' : 'disabled'}>Add ${picked.size || ''} page${picked.size === 1 ? '' : 's'}</button>
+      </div>
+    </div>`;
+  const filter = w.querySelector('#disc-filter');
+  filter.oninput = debounce((e) => { discQuery = e.target.value; const pos = e.target.selectionStart; renderDiscoverResults(); const nf = document.getElementById('disc-filter'); if (nf) { nf.focus(); nf.setSelectionRange(pos, pos); } }, 200);
+  w.querySelector('#disc-toggle-all').onclick = () => {
+    const list2 = visiblePages();
+    if (list2.every(p => picked.has(p.url))) list2.forEach(p => picked.delete(p.url));
+    else list2.forEach(p => picked.add(p.url));
+    renderDiscoverResults();
+  };
+  w.querySelector('#disc-rediscover').onclick = () => runDiscover();
+  w.querySelectorAll('.page-pick input').forEach(c => c.onchange = () => { c.checked ? picked.add(c.dataset.url) : picked.delete(c.dataset.url); renderDiscoverResults(); });
+  const add = w.querySelector('#disc-add');
+  add.onclick = () => {
+    toast(`Scraping ${picked.size} page${picked.size === 1 ? '' : 's'} — coming soon.`, 'info');
+  };
+  w.querySelectorAll('[data-close]').forEach(b => b.onclick = resetDiscoverPanel);
+}
+/** Back to the upload source, discarding any discovery in progress. */
+function resetDiscoverPanel() {
+  discovered = []; picked.clear(); discQuery = ''; rootUrl = '';
+  document.getElementById('src-website').hidden = true;
+  document.getElementById('src-upload').hidden = false;
+  page.querySelectorAll('[data-source]').forEach(x => x.setAttribute('aria-selected', String(x.dataset.source === 'upload')));
+  const input = document.getElementById('root-url');
+  if (input) input.value = '';
+  renderDiscoverIdle();
+}
+async function runDiscover() {
+  if (discLoading) return;
+  const input = document.getElementById('root-url');
+  const btn = document.getElementById('discover-btn');
+  const raw = input?.value || rootUrl;
+  const url = normalizeRootUrl(raw);
+  const hint = document.getElementById('disc-hint');
+  if (!url) {
+    input?.closest('.url-input')?.classList.add('invalid');
+    hint.className = 'tiny mt1 disc-error-text';
+    hint.textContent = 'Enter a valid website URL, e.g. https://docs.example.com';
+    input?.focus();
+    return;
+  }
+  input.closest('.url-input')?.classList.remove('invalid');
+  input.value = url;
+  rootUrl = url;
+  hint.className = 'tiny muted mt1';
+  hint.textContent = 'Works best on public docs or help-center sites. Sub-pages of the same host are included.';
+  discLoading = true;
+  btn.disabled = true;
+  btn.innerHTML = `<span class="spinner"></span> Discovering…`;
+  renderDiscoverLoading();
+  try {
+    const res = await apiFetch(ENDPOINTS.discover(orgId, kbId), { method: 'POST', body: { root_url: url } });
+    const seen = new Set();
+    discovered = discoverPages(res).map(p => ({ url: pageUrl(p), title: pageTitle(p), depth: pageDepth(p) })).filter(p => {
+      if (!p.url || seen.has(p.url)) return false;
+      seen.add(p.url); return true;
+    });
+    picked.clear();
+    discQuery = '';
+    if (!discovered.length) { renderDiscoverError('No pages were found on that site. Try the root domain or a different URL.'); return; }
+    renderDiscoverResults();
+  } catch (e) {
+    renderDiscoverError(e.status === 403 ? 'Permission denied.' : (e.message || 'Could not reach the site.'));
+  } finally {
+    discLoading = false;
+    btn.disabled = false;
+    btn.innerHTML = `<span class="disc-ico" aria-hidden="true">🌐</span> Discover pages`;
+  }
 }
 async function loadKb() {
   try { kb = await apiFetch(ENDPOINTS.kbDetail(orgId, kbId), { cacheTtl: 15000 }); }
@@ -220,7 +393,21 @@ page.innerHTML = `
   ${canManage ? `<button class="btn btn-secondary btn-sm" id="kb-edit">Edit KB</button>` : `<span class="badge b-member">🔒 Read-only</span>`}</div>
   <div class="tabs" role="tablist"><button class="tab" data-tab="documents" aria-selected="${tab === 'documents'}">Documents</button><button class="tab" data-tab="settings" aria-selected="${tab === 'settings'}">Settings</button></div>
   <div id="tab-documents" ${tab !== 'documents' ? 'hidden' : ''}>
-    ${canManage ? `<div class="dropzone" id="dz" role="button" tabindex="0" aria-label="Upload documents"><strong>Drag & drop files here</strong> or <u>browse</u><br><span class="small muted">${ACCEPTED_EXTS.join(' · ')} · max ${MAX_FILE_MB} MB each · recursive text splitter</span><input type="file" id="fp" multiple hidden accept="${ACCEPTED_EXTS.join(',')}"></div><div id="uploads" class="mt2"></div>` : `<div class="alert alert-info">You have read-only access. Only owners/admins can upload.</div>`}
+    ${canManage ? `
+    <div class="add-panel card">
+      <div class="add-panel-head">
+        <h3>Add data</h3>
+        <div class="source-switch" role="tablist" aria-label="Add data source">
+          <button class="source-opt" data-source="upload" role="tab" aria-selected="true"><span aria-hidden="true">📄</span> Upload files</button>
+          <button class="source-opt" data-source="website" role="tab" aria-selected="false"><span aria-hidden="true">🌐</span> From website</button>
+        </div>
+      </div>
+      <div id="src-upload">
+        <div class="dropzone" id="dz" role="button" tabindex="0" aria-label="Upload documents"><strong>Drag & drop files here</strong> or <u>browse</u><br><span class="small muted">${ACCEPTED_EXTS.join(' · ')} · max ${MAX_FILE_MB} MB each · recursive text splitter</span><input type="file" id="fp" multiple hidden accept="${ACCEPTED_EXTS.join(',')}"></div>
+        <div id="uploads" class="mt2"></div>
+      </div>
+      <div id="src-website" hidden>${DISCOVER_PANEL_HTML}</div>
+    </div>` : `<div class="alert alert-info">You have read-only access. Only owners/admins can add data.</div>`}
     <div id="docs" class="mt2">${skeletonList(2)}</div>
   </div>
   <div id="tab-settings" ${tab !== 'settings' ? 'hidden' : ''}><div class="card"><h3>KB Settings</h3><p class="small muted">ID <span class="mono">${escapeHtml(String(kb.id))}</span> · created ${escapeHtml(kb.created_at || '—')}</p></div></div>`;
@@ -238,4 +425,16 @@ if (dz) {
   dz.addEventListener('drop', (e) => [...e.dataTransfer.files].filter(validFile).forEach(startUpload));
   fp.onchange = () => [...fp.files].filter(validFile).forEach(startUpload);
 }
+/* Upload files ⇄ Website URL switcher */
+page.querySelectorAll('[data-source]').forEach(b => b.onclick = () => {
+  const src = b.dataset.source;
+  if (src === 'upload' && b.getAttribute('aria-selected') === 'true') return;
+  page.querySelectorAll('[data-source]').forEach(x => x.setAttribute('aria-selected', String(x === b)));
+  document.getElementById('src-upload').hidden = src !== 'upload';
+  document.getElementById('src-website').hidden = src !== 'website';
+  if (src === 'website' && !discovered.length && !discLoading) renderDiscoverIdle();
+});
+document.getElementById('root-url')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); runDiscover(); } });
+document.getElementById('discover-btn')?.addEventListener('click', runDiscover);
+renderDiscoverIdle();
 await loadDocs(true, kb);

@@ -43,7 +43,7 @@ CORS_ALLOWED_ORIGINS = ["http://127.0.0.1:5500", "http://localhost:5500"]
 
 ## Features
 
-Signup/login/JWT + silent refresh, org switcher, dashboard stats + checklist, KB CRUD + drag-drop upload with progress + status polling, bot wizard + one-time key modal + integration snippets + playground (session UUID, markdown, sources), members/invites with role matrix, settings, light/dark theme, toasts/skeletons/empty/error states, responsive + a11y (focus trap, Esc, `/` search, reduced-motion).
+Signup/login/JWT + silent refresh, org switcher, dashboard stats + checklist, KB CRUD + drag-drop upload with progress + status polling, KB data sources (file upload / website URL discovery → `POST /kbs/<id>/discover/` with `root_url`, selectable page list; scraping the selection is next), bot wizard + one-time key modal + integration snippets + playground (session UUID, markdown, sources), members/invites with role matrix, settings, light/dark theme, toasts/skeletons/empty/error states, responsive + a11y (focus trap, Esc, `/` search, reduced-motion).
 
 ## Known backend gaps
 

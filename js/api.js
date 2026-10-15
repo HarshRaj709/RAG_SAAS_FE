@@ -80,6 +80,11 @@ export function parseError(status, payload) {
 
 let mockSeed = 3;
 function mockResponse(method, path, body) {
+  if (path.includes('/discover/')) {
+    const root = String(body?.root_url || '').replace(/\/+$/, '');
+    const pages = ['/docs', '/docs/quickstart', '/docs/api', '/docs/api/auth', '/docs/webhooks', '/pricing', '/blog/launch', '/about'];
+    return { count: pages.length, root_url: root, pages: pages.map((p, i) => ({ url: root + p, title: p.split('/').pop().replace(/-/g, ' '), depth: p.split('/').length - 2 })) };
+  }
   if (path.includes('/kbs/') && (path.includes('/documents') || path.includes('/ingest'))) return body instanceof FormData ? { id: 'd' + (mockSeed++), filename: 'upload.pdf', status: 'pending', chunk_count: 0, created_at: new Date().toISOString() } : [];
   if (path.endsWith('/kbs/')) return method === 'POST' ? { id: 'kb1', ...body, document_count: 0, total_chunks: 0, created_at: new Date().toISOString() } : [{ id: 'kb1', name: 'Help Center', description: 'Support docs', document_count: 4, total_chunks: 128, created_at: new Date().toISOString() }];
   if (path.endsWith('/bots/')) return method === 'POST' ? { id: 'b1', slug: 'acme-support', api_key: 'rag_demo_key_123456', ...body } : [{ id: 'b1', name: 'Support Bot', slug: 'acme-support', knowledge_bases: ['kb1'], created_at: new Date().toISOString() }];

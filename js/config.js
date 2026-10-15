@@ -29,6 +29,7 @@ export const ENDPOINTS = {
   kbs: (id) => `/api/knowledge_base/orgs/${id}/kbs/`, // GET list, POST create {name, description}
   kbDetail: (orgId, kbId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/`, // GET detail, PATCH {name, description}, DELETE
   ingest: (orgId, kbId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/ingest/`, // POST multipart {file}
+  discover: (orgId, kbId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/discover/`, // POST {root_url} -> discovered page list (select-then-scrape is coming next)
   documentDetail: (orgId, kbId, docId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/documents/${docId}/`, // GET status, DELETE single doc
   documentRetry: (orgId, kbId, docId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/documents/${docId}/retry/`, // POST retry failed ingestion
   bots: (id) => `/api/chat/orgs/${id}/bots/`,
