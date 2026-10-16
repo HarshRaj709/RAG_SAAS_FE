@@ -5,6 +5,7 @@ import { apiFetch, asList, uploadWithProgress } from '../api.js';
 import { ENDPOINTS, ACCEPTED_EXTS, MAX_FILE_MB, POLL_MS, FINAL_DOC_STATUSES } from '../config.js';
 import { toast, confirmDialog, skeletonList, emptyState, openModal } from '../ui.js';
 import { escapeHtml, timeAgo, formatBytes, qp, debounce } from '../utils.js';
+import { startWebImport as startWebImportRequest, webImportUrl, normalizeImportList, isSessionTerminal, sessionProgress, progressText, sessionStatusInfo } from './web-import-controller.js';
 initTheme();
 await guard('knowledge-bases.html');
 const { orgId, org } = await getOrgContext();
@@ -49,9 +50,9 @@ function kbDocs(detail) {
   return [];
 }
 /* ================= Website URL discovery =================
- * Two-step flow: POST {root_url} -> discover/ returns the site's available
- * pages, user picks the ones to scrape. Step 2 (scraping the selected URLs)
- * is not wired to the backend yet, so "Add selected" is a UI-only action.
+ * Flow: POST {root_url} -> discover/ returns the site's available pages, the
+ * user picks the ones to import, then "Review selected pages" starts a web
+ * import session (POST web-imports/) and navigates to the review screen.
  */
 const DISCOVER_PANEL_HTML = `
   <div class="discover">
@@ -150,7 +151,7 @@ function renderDiscoverResults() {
       <span class="tiny muted">${picked.size ? `${picked.size} page${picked.size === 1 ? '' : 's'} ready to scrape` : 'Select at least one page to continue'}</span>
       <div class="flex" style="gap:10px">
         <button class="btn btn-secondary btn-sm" data-close>Cancel</button>
-        <button class="btn btn-primary btn-sm" id="disc-add" ${picked.size ? '' : 'disabled'}>Add ${picked.size || ''} page${picked.size === 1 ? '' : 's'}</button>
+        <button class="btn btn-primary btn-sm" id="disc-add" ${picked.size ? '' : 'disabled'}>Review ${picked.size || ''} page${picked.size === 1 ? '' : 's'}</button>
       </div>
     </div>`;
   const filter = w.querySelector('#disc-filter');
@@ -164,10 +165,31 @@ function renderDiscoverResults() {
   w.querySelector('#disc-rediscover').onclick = () => runDiscover();
   w.querySelectorAll('.page-pick input').forEach(c => c.onchange = () => { c.checked ? picked.add(c.dataset.url) : picked.delete(c.dataset.url); renderDiscoverResults(); });
   const add = w.querySelector('#disc-add');
-  add.onclick = () => {
-    toast(`Scraping ${picked.size} page${picked.size === 1 ? '' : 's'} — coming soon.`, 'info');
-  };
+  add.onclick = () => startWebImport(add);
   w.querySelectorAll('[data-close]').forEach(b => b.onclick = resetDiscoverPanel);
+}
+/**
+ * Step 2: submit the selected URLs, then hand off to the review screen. The
+ * import id is carried in the route so a refresh restores the session.
+ */
+async function startWebImport(btn) {
+  const urls = [...picked];
+  if (!urls.length) return;
+  const label = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = `<span class="spinner"></span> Starting…`;
+  try {
+    const { importId } = await startWebImportRequest({
+      urls,
+      createImport: (list) => apiFetch(ENDPOINTS.webImports(orgId, kbId), { method: 'POST', body: { urls: list } }),
+    });
+    toast(`Import started for ${urls.length} page${urls.length === 1 ? '' : 's'}`, 'success');
+    location.href = webImportUrl(kbId, importId);
+  } catch (e) {
+    btn.disabled = false;
+    btn.innerHTML = label;
+    toast(e.status === 403 ? 'Permission denied.' : (e.message || 'Could not start the import.'), 'error');
+  }
 }
 /** Back to the upload source, discarding any discovery in progress. */
 function resetDiscoverPanel() {
@@ -408,6 +430,7 @@ page.innerHTML = `
       </div>
       <div id="src-website" hidden>${DISCOVER_PANEL_HTML}</div>
     </div>` : `<div class="alert alert-info">You have read-only access. Only owners/admins can add data.</div>`}
+    <div id="web-imports" class="mt2" hidden></div>
     <div id="docs" class="mt2">${skeletonList(2)}</div>
   </div>
   <div id="tab-settings" ${tab !== 'settings' ? 'hidden' : ''}><div class="card"><h3>KB Settings</h3><p class="small muted">ID <span class="mono">${escapeHtml(String(kb.id))}</span> · created ${escapeHtml(kb.created_at || '—')}</p></div></div>`;
@@ -436,5 +459,80 @@ page.querySelectorAll('[data-source]').forEach(b => b.onclick = () => {
 });
 document.getElementById('root-url')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); runDiscover(); } });
 document.getElementById('discover-btn')?.addEventListener('click', runDiscover);
+/* ================= Past webpage imports (revisit / remove) =================
+ * Unconfirmed scrape sessions for this KB. Each can be reopened in the review
+ * screen; nothing here has been added to the knowledge base.
+ */
+let wiList = [];
+let wiTimer = null;
+let wiLoading = false;
+function stopWiPoll() { if (wiTimer) { clearTimeout(wiTimer); wiTimer = null; } }
+function renderWebImports() {
+  const w = document.getElementById('web-imports');
+  if (!w) return;
+  if (!wiList.length) { w.hidden = true; w.innerHTML = ''; stopWiPoll(); return; }
+  w.hidden = false;
+  const anyActive = wiList.some(s => !isSessionTerminal(s.status));
+  w.innerHTML = `<div class="card wi-imports">
+    <div class="wi-imports-head">
+      <div><h3>Webpage imports</h3><p class="tiny muted">Drafts awaiting review — not added to this knowledge base yet.</p></div>
+      <button class="btn btn-ghost btn-sm" id="wi-refresh">↻ Refresh</button>
+    </div>
+    <div class="wi-imports-list">
+      ${wiList.map(s => {
+        const prog = sessionProgress(s, []);
+        const info = sessionStatusInfo(s.status);
+        return `<div class="wi-import-row">
+          <div class="wi-import-main">
+            <div class="wi-import-top"><span class="badge ${info.badge}">${escapeHtml(info.label)}</span>
+              <strong>${prog.total} page${prog.total === 1 ? '' : 's'}</strong></div>
+            <div class="tiny muted">${escapeHtml(progressText(prog))}${prog.failed ? ` · ${prog.failed} failed` : ''} · created ${escapeHtml(timeAgo(s.created_at))}</div>
+          </div>
+          <div class="wi-import-actions">
+            <a class="btn btn-secondary btn-sm" href="${webImportUrl(kbId, s.id)}">Review</a>
+            ${canManage ? `<button class="btn btn-ghost btn-sm" data-remove-import="${escapeHtml(String(s.id))}">Remove</button>` : ''}
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+    ${anyActive ? `<p class="tiny muted mt1">⏳ Scraping in progress… this list updates automatically.</p>` : ''}
+  </div>`;
+  const rf = w.querySelector('#wi-refresh');
+  if (rf) rf.onclick = () => loadWebImports(false);
+  w.querySelectorAll('[data-remove-import]').forEach(b => b.onclick = () => removeWebImport(b.dataset.removeImport, b));
+  stopWiPoll();
+  if (anyActive) wiTimer = setTimeout(() => loadWebImports(true), POLL_MS);
+}
+async function loadWebImports(silent) {
+  if (wiLoading) return;
+  wiLoading = true;
+  try {
+    const res = await apiFetch(ENDPOINTS.webImports(orgId, kbId), { cacheTtl: 0 });
+    wiList = normalizeImportList(res);
+    renderWebImports();
+  } catch (e) {
+    if (!silent) toast(e.status === 403 ? 'Permission denied.' : e.message, 'error');
+    else stopWiPoll();
+  } finally { wiLoading = false; }
+}
+async function removeWebImport(id, btn) {
+  const s = wiList.find(x => String(x.id) === String(id));
+  const n = sessionProgress(s, []).total;
+  if (!await confirmDialog({ title: 'Remove this import?', body: `The scraped drafts${n ? ` for ${n} page${n === 1 ? '' : 's'}` : ''} will be discarded. This does not affect documents already in the knowledge base.`, confirmText: 'Remove' })) return;
+  if (btn) btn.disabled = true;
+  try {
+    await apiFetch(ENDPOINTS.webImportDetail(orgId, id), { method: 'DELETE' });
+    wiList = wiList.filter(x => String(x.id) !== String(id));
+    renderWebImports();
+    toast('Import removed', 'success');
+  } catch (e) {
+    if (btn) btn.disabled = false;
+    toast(e.status === 403 ? 'Permission denied.' : (e.message || 'Could not remove the import.'), 'error');
+  }
+}
+window.addEventListener('pagehide', stopWiPoll);
+window.addEventListener('beforeunload', stopWiPoll);
+document.addEventListener('visibilitychange', () => { if (document.hidden) stopWiPoll(); else if (wiList.some(s => !isSessionTerminal(s.status))) loadWebImports(true); });
 renderDiscoverIdle();
+loadWebImports(true);
 await loadDocs(true, kb);

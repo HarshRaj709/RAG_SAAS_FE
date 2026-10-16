@@ -29,7 +29,11 @@ export const ENDPOINTS = {
   kbs: (id) => `/api/knowledge_base/orgs/${id}/kbs/`, // GET list, POST create {name, description}
   kbDetail: (orgId, kbId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/`, // GET detail, PATCH {name, description}, DELETE
   ingest: (orgId, kbId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/ingest/`, // POST multipart {file}
-  discover: (orgId, kbId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/discover/`, // POST {root_url} -> discovered page list (select-then-scrape is coming next)
+  discover: (orgId, kbId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/discover/`, // POST {root_url} -> discovered page list
+  // Web import (scrape -> review).
+  webImports: (orgId, kbId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/web-imports/`, // GET -> past sessions (paginated); POST {urls} -> 202 {import_id, pages}
+  webImportDetail: (orgId, importId) => `/api/knowledge_base/orgs/${orgId}/web-imports/${importId}/`, // GET session status + counts; DELETE discards unconfirmed drafts
+  webImportPages: (orgId, importId) => `/api/knowledge_base/orgs/${orgId}/web-imports/${importId}/pages/`, // GET persisted drafts
   documentDetail: (orgId, kbId, docId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/documents/${docId}/`, // GET status, DELETE single doc
   documentRetry: (orgId, kbId, docId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/documents/${docId}/retry/`, // POST retry failed ingestion
   bots: (id) => `/api/chat/orgs/${id}/bots/`,
@@ -43,3 +47,11 @@ export const ENDPOINTS = {
 export const BOT_DOMAINS_FIELD = 'allowed_domains';
 export const FINAL_DOC_STATUSES = ['completed', 'complete', 'done', 'ready', 'indexed', 'processed', 'success', 'succeeded', 'failed', 'error', 'errored'];
 export const MAX_DOC_POLLS = 30; // ~2 min at POLL_MS; then polling stops with a manual Refresh
+
+/* ---- Web import (scrape -> review) statuses ---- */
+// A page draft is done once it is completed or failed.
+export const FINAL_PAGE_STATUSES = ['completed', 'complete', 'done', 'ready', 'success', 'succeeded', 'failed', 'error', 'errored'];
+// The import session is terminal once every page has finished (all-ok, partial, or all-failed).
+export const TERMINAL_SESSION_STATUSES = ['ready_for_review', 'partially_failed', 'failed'];
+export const WEB_IMPORT_POLL_MS = 3000;
+export const WEB_IMPORT_MAX_FAILURES = 3; // consecutive poll failures before giving up

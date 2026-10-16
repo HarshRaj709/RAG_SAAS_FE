@@ -80,6 +80,24 @@ export function parseError(status, payload) {
 
 let mockSeed = 3;
 function mockResponse(method, path, body) {
+  if (path.includes('/web-imports/') && path.endsWith('/pages/')) {
+    return { import_id: 'imp1', pages: [
+      { id: 'p1', url: 'https://example.com/docs/getting-started', final_url: 'https://example.com/docs/getting-started', title: 'Getting started', status: 'completed', content: '# Getting started\n\nWelcome to the **docs**.\n\n- Install\n- Configure\n\nSee [pricing](https://example.com/pricing) for details.\n\n| Plan | Price |\n| --- | --- |\n| Free | $0 |', content_format: 'markdown', word_count: 24, error: '', scraped_at: new Date().toISOString() },
+      { id: 'p2', url: 'https://example.com/pricing', title: 'Pricing', status: 'failed', content: '', content_format: 'markdown', word_count: 0, error: 'The page could not be fetched (HTTP 404).', scraped_at: null },
+    ] };
+  }
+  if (path.includes('/web-imports/') && method === 'POST' && path.endsWith('/web-imports/')) {
+    const urls = Array.isArray(body?.urls) ? body.urls : [];
+    return { import_id: 'imp1', status: 'processing', total_pages: urls.length, completed_pages: 0, failed_pages: 0, pages: urls.map((u, i) => ({ id: 'p' + i, url: u, status: 'pending' })) };
+  }
+  if (path.endsWith('/web-imports/') && method === 'GET') {
+    return { count: 1, next: null, previous: null, results: [
+      { import_id: 'imp1', status: 'ready_for_review', total_pages: 2, pending_pages: 0, processing_pages: 0, completed_pages: 1, failed_pages: 1, created_at: new Date(Date.now() - 3600000).toISOString(), updated_at: new Date().toISOString() },
+    ] };
+  }
+  if (path.includes('/web-imports/')) {
+    return { import_id: 'imp1', status: 'ready_for_review', total_pages: 2, pending_pages: 0, processing_pages: 0, completed_pages: 1, failed_pages: 1, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+  }
   if (path.includes('/discover/')) {
     const root = String(body?.root_url || '').replace(/\/+$/, '');
     const pages = ['/docs', '/docs/quickstart', '/docs/api', '/docs/api/auth', '/docs/webhooks', '/pricing', '/blog/launch', '/about'];
