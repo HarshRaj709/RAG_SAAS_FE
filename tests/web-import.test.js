@@ -16,6 +16,7 @@ import {
   shortUrl,
   failedPageMessage,
   resolveSelectedId,
+  mergePolledPages,
   classifySessionError,
   webImportUrl,
   startWebImport,
@@ -207,6 +208,26 @@ test('resolveSelectedId keeps the current page and falls back to the first', () 
   assert.equal(resolveSelectedId(pages, 'b'), 'b');
   assert.equal(resolveSelectedId(pages, 'missing'), 'a');
   assert.equal(resolveSelectedId([], 'b'), null);
+});
+
+test('normalizePages restores persisted inclusion state and defaults older responses to included', () => {
+  assert.equal(normalizePages([{ id: 'a', is_included: false }])[0].is_included, false);
+  assert.equal(normalizePages([{ id: 'b' }])[0].is_included, true);
+});
+
+test('poll merging preserves editor text and pending inclusion changes', () => {
+  const current = [{ id: 'a', status: 'completed', content: 'saved', is_included: true, title: 'Old' }];
+  const polled = [{ id: 'a', status: 'completed', content: 'stale', is_included: true, title: 'New' }];
+  const merged = mergePolledPages(polled, current, { editingId: 'a', editorText: 'unsaved', pendingInclusion: new Map([['a', false]]) });
+  assert.equal(merged[0].content, 'unsaved');
+  assert.equal(merged[0].is_included, false);
+  assert.equal(merged[0].title, 'New');
+});
+
+test('poll merging uses server state when no local mutation is pending', () => {
+  const merged = mergePolledPages([{ id: 'a', content: 'new', is_included: false }], [{ id: 'a', content: 'old', is_included: true }]);
+  assert.equal(merged[0].content, 'new');
+  assert.equal(merged[0].is_included, false);
 });
 
 test('classifySessionError distinguishes 404/403/401/network', () => {

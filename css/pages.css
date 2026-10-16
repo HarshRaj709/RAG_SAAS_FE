@@ -164,6 +164,16 @@
 .wi-plain{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:16px;white-space:pre-wrap;word-break:break-word;font-family:var(--font-mono);font-size:13px;margin:0}
 .wi-progress{min-width:min(320px,100%)}
 .wi-progress-top{display:flex;align-items:center;gap:10px;justify-content:space-between;margin-bottom:8px}
+.wi-draft-controls{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:12px 20px;border-bottom:1px solid var(--border);background:var(--surface-2)}
+.wi-include{display:flex;align-items:center;gap:9px;font-size:13px;font-weight:600;cursor:pointer}
+.wi-include input{width:18px;height:18px;accent-color:var(--primary)}
+.wi-inclusion{font-weight:600}.wi-inclusion.is-included{color:var(--success)}
+.wi-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.wi-editor{display:flex;flex-direction:column;gap:12px}
+.wi-editor-status{display:flex;align-items:center;gap:10px;min-height:24px}
+.wi-editor textarea{width:100%;min-height:360px;resize:vertical;padding:14px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--text);font:13px/1.6 var(--font-mono)}
+.wi-editor textarea:focus-visible{outline:none;box-shadow:var(--focus)}
+.error-text{color:var(--danger)}
 /* Markdown preview */
 .md-body{line-height:1.7;font-size:15px;overflow-wrap:break-word}
 .md-body>*:first-child{margin-top:0}
@@ -186,6 +196,7 @@
   .wi-list{max-height:300px}
   .wi-content-body{max-height:none}
 }
+@media(max-width:600px){.wi-draft-controls{align-items:flex-start}.wi-draft-controls>.wi-actions{width:100%}.wi-draft-controls>.wi-actions .btn{flex:1}.wi-editor textarea{min-height:260px}}
 /* Past imports list on the KB page */
 .wi-imports{padding:18px 20px}
 .wi-imports-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px}

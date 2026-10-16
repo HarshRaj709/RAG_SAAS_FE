@@ -3,7 +3,7 @@ import { guard } from '../router-guard.js';
 import { getOrgContext } from '../components/org-switcher.js';
 import { apiFetch } from '../api.js';
 import { ENDPOINTS, WEB_IMPORT_POLL_MS, WEB_IMPORT_MAX_FAILURES } from '../config.js';
-import { toast, emptyState, skeletonList } from '../ui.js';
+import { toast, emptyState, skeletonList, confirmDialog, openModal } from '../ui.js';
 import { escapeHtml, timeAgo, copyText, qp } from '../utils.js';
 import {
   pageStatusInfo,
@@ -20,6 +20,7 @@ import {
   createImportPoller,
   normalizeSession,
   normalizePages,
+  mergePolledPages,
 } from './web-import-controller.js';
 
 initTheme();
@@ -39,6 +40,11 @@ let session = { status: 'pending', total_pages: 0 };
 let pages = [];
 let selectedId = null;
 let mounted = true;
+let editor = { id: null, text: '', editing: false, saving: false, error: '', saved: false };
+const inclusionPending = new Map();
+const inclusionBusy = new Set();
+const deleteBusy = new Set();
+const dirty = () => editor.editing && pages.find(p => String(p.id) === String(editor.id))?.content !== editor.text;
 
 function backHref() {
   return kbId ? `knowledge-base.html?id=${encodeURIComponent(kbId)}` : 'knowledge-bases.html';
@@ -84,7 +90,7 @@ function renderHeader() {
         <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${prog.percent}" aria-label="Pages scraped">
           <div style="width:${prog.percent}%"></div>
         </div>
-        <div class="tiny muted mt1">These pages are drafts — nothing is added to the knowledge base yet.</div>
+        <div class="tiny muted mt1">${pages.filter(p => p.is_included).length} included · ${pages.filter(p => !p.is_included).length} excluded. These are drafts — nothing is added to the knowledge base yet.</div>
       </div>
     </div>
     <div id="wi-poll-warn"></div>`;
@@ -112,12 +118,13 @@ function renderList() {
         </span>
         <span class="wi-row-meta">
           <span class="badge ${info.badge}">${escapeHtml(info.label)}</span>
+          <span class="tiny wi-inclusion ${p.is_included ? 'is-included' : ''}">${p.is_included ? 'Included' : 'Excluded'}</span>
           ${wc}
         </span>
       </button>`;
   }).join('');
   w.querySelectorAll('.wi-row').forEach((b) => {
-    b.onclick = () => { selectedId = b.dataset.pageId; renderList(); renderContent(); };
+    b.onclick = async () => { if (await canLeaveEditor()) { selectedId = b.dataset.pageId; if (editor.id !== selectedId) editor = { id: null, text: '', editing: false, saving: false, error: '', saved: false }; renderList(); renderContent(); } };
   });
 }
 
@@ -134,6 +141,7 @@ function renderContent() {
     return;
   }
   const info = pageStatusInfo(p.status);
+  if (editor.id !== String(p.id)) editor = { id: String(p.id), text: p.content || '', editing: false, saving: false, error: '', saved: false };
   const src = p.final_url || p.url;
   const header = `
     <div class="wi-main-head">
@@ -151,7 +159,9 @@ function renderContent() {
 
   let body = '';
   if (info.key === 'completed') {
-    if (p.content && p.content.trim()) {
+    if (editor.editing) {
+      body = `<div class="wi-editor"><div class="wi-editor-status" aria-live="polite">${dirty() ? '<span class="badge b-warning">Unsaved changes</span>' : editor.saved ? '<span class="badge b-completed">Saved</span>' : ''}${editor.error ? `<span class="tiny error-text">${escapeHtml(editor.error)}</span>` : ''}</div><label class="sr-only" for="wi-editor-text">Markdown content</label><textarea id="wi-editor-text" rows="20" spellcheck="false" ${editor.saving ? 'disabled' : ''}>${escapeHtml(editor.text)}</textarea><div class="wi-actions"><button class="btn btn-primary" id="wi-save" ${editor.saving || !dirty() ? 'disabled' : ''}>${editor.saving ? '<span class="spinner"></span> Saving…' : 'Save'}</button><button class="btn btn-secondary" id="wi-cancel" ${editor.saving ? 'disabled' : ''}>Cancel</button></div></div>`;
+    } else if (p.content && p.content.trim()) {
       const fmt = String(p.content_format || 'markdown').toLowerCase();
       body = (fmt === 'markdown' || fmt === 'md')
         ? `<div class="md-body">${renderMarkdown(p.content, { sanitize })}</div>`
@@ -173,11 +183,74 @@ function renderContent() {
       </div>`;
   }
 
-  w.innerHTML = `<div class="card wi-content">${header}<div class="wi-content-body">${body}</div></div>`;
+  const eligible = info.key === 'completed';
+  const state = p.is_included ? 'Included in future import' : 'Excluded from future import';
+  const controls = `<div class="wi-draft-controls"><label class="wi-include"><input id="wi-include" type="checkbox" ${p.is_included ? 'checked' : ''} ${!eligible || inclusionBusy.has(String(p.id)) ? 'disabled' : ''}><span>${escapeHtml(state)}</span></label><div class="wi-actions">${eligible && !editor.editing ? '<button type="button" class="btn btn-secondary btn-sm" id="wi-edit">Edit content</button>' : ''}<button type="button" class="btn btn-ghost btn-sm" id="wi-delete" ${deleteBusy.has(String(p.id)) ? 'disabled' : ''}>${deleteBusy.has(String(p.id)) ? 'Deleting…' : 'Delete draft'}</button></div></div>`;
+  w.innerHTML = `<div class="card wi-content">${header}${controls}<div class="wi-content-body">${body}</div></div>`;
   const copy = w.querySelector('#wi-copy');
   if (copy) copy.onclick = async () => {
     if (await copyText(src)) toast('Source URL copied', 'success');
   };
+  w.querySelector('#wi-edit')?.addEventListener('click', () => { editor = { id: String(p.id), text: p.content || '', editing: true, saving: false, error: '', saved: false }; renderContent(); w.querySelector('#wi-editor-text')?.focus(); });
+  w.querySelector('#wi-editor-text')?.addEventListener('input', (e) => { editor.text = e.target.value; editor.saved = false; const save = w.querySelector('#wi-save'); if (save) save.disabled = editor.saving || !dirty(); const status = w.querySelector('.wi-editor-status'); if (status) status.innerHTML = dirty() ? '<span class="badge b-warning">Unsaved changes</span>' : ''; });
+  w.querySelector('#wi-save')?.addEventListener('click', saveDraft);
+  w.querySelector('#wi-cancel')?.addEventListener('click', () => { editor.text = p.content || ''; editor.editing = false; editor.error = ''; editor.saved = false; renderContent(); });
+  w.querySelector('#wi-include')?.addEventListener('change', (e) => updateInclusion(p, e.target.checked));
+  w.querySelector('#wi-delete')?.addEventListener('click', () => deleteDraft(p));
+}
+
+async function canLeaveEditor() {
+  if (!dirty()) return true;
+  return new Promise((resolve) => {
+    const { el, close } = openModal(`<div class="modal-head"><h3>Unsaved changes</h3><button class="icon-btn" data-stay aria-label="Stay">✕</button></div><div class="modal-body"><p class="muted">Save your edits before switching pages?</p></div><div class="modal-foot"><button class="btn btn-secondary" data-discard>Discard</button><button class="btn btn-secondary" data-stay>Stay</button><button class="btn btn-primary" data-save>Save</button></div>`);
+    el.querySelectorAll('[data-stay]').forEach(b => b.onclick = () => { close(); resolve(false); });
+    el.querySelector('[data-discard]').onclick = () => { close(); editor.editing = false; resolve(true); };
+    el.querySelector('[data-save]').onclick = async (e) => { e.currentTarget.disabled = true; const ok = await saveDraft(); close(); resolve(ok); };
+  });
+}
+
+async function saveDraft() {
+  if (!editor.editing || editor.saving || !dirty()) return false;
+  const id = editor.id; editor.saving = true; editor.error = ''; renderContent();
+  try {
+    const res = await apiFetch(ENDPOINTS.webImportPage(orgId, importId, encodeURIComponent(id)), { method: 'PATCH', body: { content: editor.text } });
+    const response = res?.page || res || {};
+    pages = pages.map(p => String(p.id) === id ? { ...p, ...response, id: p.id, content: response.content ?? editor.text, word_count: response.word_count ?? editor.text.trim().split(/\s+/).filter(Boolean).length } : p);
+    editor.text = pages.find(p => String(p.id) === id)?.content || editor.text;
+    editor.saving = false; editor.editing = false; editor.saved = true; render(); toast('Draft saved', 'success'); return true;
+  } catch (e) { editor.saving = false; editor.error = e?.status && e.status < 500 ? e.message : 'Could not save this draft. Try again.'; renderContent(); return false; }
+}
+
+async function updateInclusion(p, included) {
+  const id = String(p.id); if (inclusionBusy.has(id)) return;
+  inclusionBusy.add(id); inclusionPending.set(id, included); renderContent();
+  try {
+    const res = await apiFetch(ENDPOINTS.webImportPage(orgId, importId, encodeURIComponent(id)), { method: 'PATCH', body: { is_included: included } });
+    const updated = res?.page || res || {};
+    pages = pages.map(x => String(x.id) === id ? { ...x, ...updated, id: x.id, is_included: updated.is_included ?? included } : x);
+    inclusionPending.delete(id); render();
+  } catch (e) { inclusionPending.delete(id); toast(e?.status && e.status < 500 ? e.message : 'Could not update inclusion. Try again.', 'error'); renderContent(); }
+  finally { inclusionBusy.delete(id); }
+}
+
+async function deleteDraft(p) {
+  const id = String(p.id); if (deleteBusy.has(id)) return;
+  const ok = await confirmDialog({ title: 'Delete this draft?', body: 'This removes the draft from the current review session. It does not delete content already indexed in the knowledge base.', confirmText: 'Delete draft' });
+  if (!ok || deleteBusy.has(id)) return;
+  deleteBusy.add(id); renderContent();
+  try {
+    await apiFetch(ENDPOINTS.webImportPage(orgId, importId, encodeURIComponent(id)), { method: 'DELETE' });
+    pages = pages.filter(x => String(x.id) !== id);
+    session.total_pages = pages.length;
+    session.completed_pages = pages.filter(x => pageStatusInfo(x.status).key === 'completed').length;
+    session.failed_pages = pages.filter(x => pageStatusInfo(x.status).key === 'failed').length;
+    session.processing_pages = pages.filter(x => pageStatusInfo(x.status).key === 'processing').length;
+    session.pending_pages = pages.filter(x => pageStatusInfo(x.status).key === 'pending').length;
+    if (editor.id === id) editor = { id: null, text: '', editing: false, saving: false, error: '', saved: false };
+    const preferred = selectedId === id ? (pages.find(x => pageStatusInfo(x.status).key === 'completed')?.id ?? null) : selectedId;
+    selectedId = resolveSelectedId(pages, preferred); render(); toast('Draft deleted', 'success');
+  } catch (e) { deleteBusy.delete(id); toast(e?.status && e.status < 500 ? e.message : 'Could not delete this draft. Try again.', 'error'); renderContent(); return; }
+  deleteBusy.delete(id);
 }
 
 function renderPollWarn(count) {
@@ -218,7 +291,7 @@ function applyData(statusRes, pagesRes) {
 function onUpdate({ session: s, pages: p }) {
   if (!mounted) return;
   session = s;
-  pages = p;
+  pages = mergePolledPages(p, pages, { editingId: editor.editing ? editor.id : null, editorText: editor.text, pendingInclusion: inclusionPending });
   selectedId = resolveSelectedId(pages, selectedId);
   renderPollWarn(0);
   render();
@@ -252,7 +325,7 @@ document.addEventListener('visibilitychange', () => {
   else if (!isSessionTerminal(session.status)) startPolling();
 });
 window.addEventListener('pagehide', () => { mounted = false; stopPolling(); });
-window.addEventListener('beforeunload', () => { mounted = false; stopPolling(); });
+window.addEventListener('beforeunload', (event) => { if (dirty()) { event.preventDefault(); event.returnValue = ''; } });
 
 /* ==================== boot ==================== */
 async function loadKbName() {

@@ -122,6 +122,7 @@ export function normalizePage(p) {
     content: typeof r.content === 'string' ? r.content : (typeof r.markdown === 'string' ? r.markdown : ''),
     content_format: r.content_format || r.format || 'markdown',
     word_count: Number(r.word_count) || 0,
+    is_included: r.is_included !== false,
     error: r.error || r.error_message || '',
     scraped_at: r.scraped_at || null,
   };
@@ -180,6 +181,19 @@ export function resolveSelectedId(pages = [], currentId = null) {
   if (!list.length) return null;
   if (currentId != null && list.some(p => String(p.id) === String(currentId))) return currentId;
   return list[0].id;
+}
+
+/** Merge a poll response without replacing an active local editor or pending inclusion update. */
+export function mergePolledPages(nextPages, currentPages, { editingId = null, editorText = '', pendingInclusion = new Map() } = {}) {
+  const current = new Map((currentPages || []).map(p => [String(p.id), p]));
+  return (nextPages || []).map(p => {
+    const old = current.get(String(p.id));
+    if (!old) return p;
+    const merged = { ...old, ...p };
+    if (String(p.id) === String(editingId)) merged.content = editorText;
+    if (pendingInclusion.has(String(p.id))) merged.is_included = pendingInclusion.get(String(p.id));
+    return merged;
+  });
 }
 
 /** Classify an API error for the invalid/unauthorized session states. */
