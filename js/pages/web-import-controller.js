@@ -37,7 +37,7 @@ export function isPageTerminal(raw) {
 }
 
 export function isSessionTerminal(raw) {
-  return ['ready_for_review', 'partially_failed', 'failed'].includes(String(raw ?? '').toLowerCase());
+  return ['ready_for_review', 'partially_failed', 'failed', 'confirmed'].includes(String(raw ?? '').toLowerCase());
 }
 
 /** Human label for an overall session status. */
@@ -46,6 +46,7 @@ export function sessionStatusInfo(raw) {
   if (v === 'ready_for_review') return { key: 'ready', label: 'Ready for review', badge: 'b-completed' };
   if (v === 'partially_failed') return { key: 'partial', label: 'Partially failed', badge: 'b-warning' };
   if (v === 'failed') return { key: 'failed', label: 'Failed', badge: 'b-failed' };
+  if (v === 'confirmed') return { key: 'confirmed', label: 'Import confirmed', badge: 'b-completed' };
   if (v === 'processing') return { key: 'processing', label: 'Scraping…', badge: 'b-processing' };
   if (v === 'pending') return { key: 'pending', label: 'Starting…', badge: 'b-pending' };
   return { key: 'unknown', label: raw ? String(raw) : 'Unknown', badge: 'b-pending' };
@@ -105,8 +106,40 @@ export function normalizeSession(res) {
     processing_pages: Number(r.processing_pages) || 0,
     completed_pages: Number(r.completed_pages) || 0,
     failed_pages: Number(r.failed_pages) || 0,
+    included_pages: Number(r.included_pages) || 0,
+    confirmed_at: r.confirmed_at || null,
+    page_count: Number(r.page_count) || 0,
+    already_confirmed: Boolean(r.already_confirmed),
     created_at: r.created_at || null,
     updated_at: r.updated_at || null,
+  };
+}
+
+/** Counts and eligibility for the Part 4 confirmation action. */
+export function confirmationSummary(session = {}, pages = [], { unsaved = false, confirming = false } = {}) {
+  const list = Array.isArray(pages) ? pages : [];
+  const included = list.filter(p => p?.is_included);
+  const excluded = list.length - included.length;
+  const attention = included.filter(p => pageStatusInfo(p?.status).key !== 'completed' || !String(p?.content || '').trim()).length;
+  const eligible = included.length - attention;
+  const scraping = ['pending', 'processing'].includes(String(session?.status || '').toLowerCase()) ||
+    list.some(p => ['pending', 'processing'].includes(pageStatusInfo(p?.status).key));
+  const confirmed = String(session?.status || '').toLowerCase() === 'confirmed';
+  const canConfirm = !confirmed && !scraping && eligible > 0 && attention === 0 && !unsaved && !confirming;
+  return { total: list.length, included: included.length, excluded, eligible, attention, scraping, confirmed, canConfirm };
+}
+
+/** Send the Part 4A confirmation request and accept only its confirmed response. */
+export async function requestWebImportConfirmation(request, endpoint) {
+  const response = await request(endpoint, { method: 'POST', body: {} });
+  if (response?.status !== 'confirmed') {
+    throw { status: 0, message: 'The server did not confirm the import.' };
+  }
+  return {
+    status: response.status,
+    confirmed_at: response.confirmed_at || null,
+    page_count: Number(response.page_count) || 0,
+    already_confirmed: Boolean(response.already_confirmed),
   };
 }
 

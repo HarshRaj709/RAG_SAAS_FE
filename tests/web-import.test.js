@@ -17,6 +17,8 @@ import {
   failedPageMessage,
   resolveSelectedId,
   mergePolledPages,
+  confirmationSummary,
+  requestWebImportConfirmation,
   classifySessionError,
   webImportUrl,
   startWebImport,
@@ -228,6 +230,64 @@ test('poll merging uses server state when no local mutation is pending', () => {
   const merged = mergePolledPages([{ id: 'a', content: 'new', is_included: false }], [{ id: 'a', content: 'old', is_included: true }]);
   assert.equal(merged[0].content, 'new');
   assert.equal(merged[0].is_included, false);
+});
+
+test('confirmation summary counts staged, included, excluded and attention pages', () => {
+  const pages = [
+    { id: 'a', status: 'completed', content: '# A', is_included: true },
+    { id: 'b', status: 'failed', content: '', is_included: true },
+    { id: 'c', status: 'failed', content: '', is_included: false },
+  ];
+  assert.deepEqual(confirmationSummary({ status: 'partially_failed' }, pages), {
+    total: 3, included: 2, excluded: 1, eligible: 1, attention: 1, scraping: false, confirmed: false, canConfirm: false,
+  });
+});
+
+test('confirmation is disabled for empty, excluded, scraping, unsaved and confirmed imports', () => {
+  const ready = [{ status: 'completed', content: 'Saved markdown', is_included: true }];
+  assert.equal(confirmationSummary({ status: 'ready_for_review' }, []).canConfirm, false);
+  assert.equal(confirmationSummary({ status: 'ready_for_review' }, [{ ...ready[0], is_included: false }]).canConfirm, false);
+  assert.equal(confirmationSummary({ status: 'processing' }, ready).canConfirm, false);
+  assert.equal(confirmationSummary({ status: 'ready_for_review' }, ready, { unsaved: true }).canConfirm, false);
+  assert.equal(confirmationSummary({ status: 'ready_for_review' }, ready, { confirming: true }).canConfirm, false);
+  assert.equal(confirmationSummary({ status: 'confirmed' }, ready).canConfirm, false);
+});
+
+test('confirmation API helper posts an empty body and requires backend confirmed status', async () => {
+  let call;
+  const result = await requestWebImportConfirmation(async (...args) => {
+    call = args;
+    return { status: 'confirmed', confirmed_at: '2026-10-16T12:00:00Z', page_count: 2, already_confirmed: false };
+  }, '/confirm/');
+  assert.deepEqual(call, ['/confirm/', { method: 'POST', body: {} }]);
+  assert.deepEqual(result, { status: 'confirmed', confirmed_at: '2026-10-16T12:00:00Z', page_count: 2, already_confirmed: false });
+  await assert.rejects(
+    () => requestWebImportConfirmation(async () => ({ status: 'ready_for_review' }), '/confirm/'),
+    (err) => /did not confirm/i.test(err.message),
+  );
+  await assert.rejects(
+    () => requestWebImportConfirmation(async () => { throw { status: 0, message: 'network unavailable' }; }, '/confirm/'),
+    (err) => err.status === 0 && err.message === 'network unavailable',
+  );
+});
+
+test('confirmed session metadata restores a read-only confirmed state after reload', () => {
+  const session = normalizeSession({ status: 'confirmed', included_pages: 4 });
+  assert.equal(isSessionTerminal(session.status), true);
+  assert.equal(sessionStatusInfo(session.status).label, 'Import confirmed');
+  assert.equal(session.included_pages, 4);
+  assert.equal(confirmationSummary(session, []).confirmed, true);
+});
+
+test('confirmation dialog offers cancel and describes snapshot-only approval', () => {
+  const page = src('../js/pages/web-import.js');
+  assert.match(page, /data-cancel/);
+  assert.match(page, /records an approved snapshot/);
+  assert.match(page, /later processing step/);
+  assert.match(page, /if \(confirming\) return/);
+  assert.match(page, /readOnly \|\| inclusionBusy/);
+  assert.match(page, /readOnly \|\| deleteBusy/);
+  assert.match(page, /status: 'confirmed'/);
 });
 
 test('classifySessionError distinguishes 404/403/401/network', () => {

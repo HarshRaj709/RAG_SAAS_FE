@@ -35,6 +35,7 @@ export const ENDPOINTS = {
   webImportDetail: (orgId, importId) => `/api/knowledge_base/orgs/${orgId}/web-imports/${importId}/`, // GET session status + counts; DELETE discards unconfirmed drafts
   webImportPages: (orgId, importId) => `/api/knowledge_base/orgs/${orgId}/web-imports/${importId}/pages/`, // GET persisted drafts
   webImportPage: (orgId, importId, pageId) => `/api/knowledge_base/orgs/${orgId}/web-imports/${importId}/pages/${pageId}/`, // PATCH editable fields; DELETE draft
+  webImportConfirm: (orgId, kbId, importId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/web-imports/${importId}/confirm/`, // POST {} -> confirmed snapshot metadata
   documentDetail: (orgId, kbId, docId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/documents/${docId}/`, // GET status, DELETE single doc
   documentRetry: (orgId, kbId, docId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/documents/${docId}/retry/`, // POST retry failed ingestion
   bots: (id) => `/api/chat/orgs/${id}/bots/`,

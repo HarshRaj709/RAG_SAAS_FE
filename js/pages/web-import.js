@@ -21,6 +21,8 @@ import {
   normalizeSession,
   normalizePages,
   mergePolledPages,
+  confirmationSummary,
+  requestWebImportConfirmation,
 } from './web-import-controller.js';
 
 initTheme();
@@ -41,6 +43,8 @@ let pages = [];
 let selectedId = null;
 let mounted = true;
 let editor = { id: null, text: '', editing: false, saving: false, error: '', saved: false };
+let confirming = false;
+let confirmation = null;
 const inclusionPending = new Map();
 const inclusionBusy = new Set();
 const deleteBusy = new Set();
@@ -76,11 +80,17 @@ function renderHeader() {
   if (!w) return;
   const prog = sessionProgress(session, pages);
   const sInfo = sessionStatusInfo(session.status);
+  const summary = confirmationSummary(session, pages, { unsaved: dirty(), confirming });
+  const confirmedAt = confirmation?.confirmed_at || session.confirmed_at;
+  const confirmedCount = confirmation?.page_count ?? (session.page_count || session.included_pages || 0);
+  const confirmationBlock = summary.confirmed
+    ? `<section class="wi-confirmed" aria-live="polite"><div><span class="badge b-completed">Import confirmed</span><strong>${confirmedCount} page${confirmedCount === 1 ? '' : 's'} approved</strong>${confirmedAt ? `<span class="tiny muted">Confirmed ${escapeHtml(timeAgo(confirmedAt))}</span>` : ''}</div><p class="tiny muted">The approved snapshot is saved. RAG processing and search availability happen in a later step.</p></section>`
+    : `<section class="wi-confirm-panel"><div><h3>Confirm Import</h3><p class="tiny muted">${summary.total} staged · ${summary.included} included · ${summary.excluded} excluded · ${summary.eligible} eligible · ${summary.attention} require attention</p>${summary.scraping ? '<p class="tiny muted">Wait for scraping to finish before confirming.</p>' : summary.attention ? '<p class="tiny muted">Exclude or resolve included pages that failed, are incomplete, or have no content.</p>' : dirty() ? '<p class="tiny muted">Save or cancel your unsaved edits before confirming.</p>' : ''}</div><button class="btn btn-primary" id="wi-confirm" ${summary.canConfirm ? '' : 'disabled'}>${confirming ? '<span class="spinner"></span> Confirming…' : 'Confirm Import'}</button></section>`;
   w.innerHTML = `
     <div class="page-head">
       <div>
-        <h2>Review webpage content</h2>
-        <p class="muted">Review the content extracted from your selected webpages before adding it to your knowledge base.</p>
+        <h2>${summary.confirmed ? 'Import confirmed' : 'Review webpage content'}</h2>
+        <p class="muted">${summary.confirmed ? 'Your approved snapshot is saved for a later processing step.' : 'Review the content extracted from your selected webpages before approving the import.'}</p>
       </div>
       <div class="wi-progress" role="group" aria-label="Scraping progress">
         <div class="wi-progress-top">
@@ -93,7 +103,9 @@ function renderHeader() {
         <div class="tiny muted mt1">${pages.filter(p => p.is_included).length} included · ${pages.filter(p => !p.is_included).length} excluded. These are drafts — nothing is added to the knowledge base yet.</div>
       </div>
     </div>
+    ${confirmationBlock}
     <div id="wi-poll-warn"></div>`;
+  w.querySelector('#wi-confirm')?.addEventListener('click', confirmImport);
 }
 
 function renderList() {
@@ -141,6 +153,7 @@ function renderContent() {
     return;
   }
   const info = pageStatusInfo(p.status);
+  const readOnly = session.status === 'confirmed';
   if (editor.id !== String(p.id)) editor = { id: String(p.id), text: p.content || '', editing: false, saving: false, error: '', saved: false };
   const src = p.final_url || p.url;
   const header = `
@@ -160,7 +173,7 @@ function renderContent() {
   let body = '';
   if (info.key === 'completed') {
     if (editor.editing) {
-      body = `<div class="wi-editor"><div class="wi-editor-status" aria-live="polite">${dirty() ? '<span class="badge b-warning">Unsaved changes</span>' : editor.saved ? '<span class="badge b-completed">Saved</span>' : ''}${editor.error ? `<span class="tiny error-text">${escapeHtml(editor.error)}</span>` : ''}</div><label class="sr-only" for="wi-editor-text">Markdown content</label><textarea id="wi-editor-text" rows="20" spellcheck="false" ${editor.saving ? 'disabled' : ''}>${escapeHtml(editor.text)}</textarea><div class="wi-actions"><button class="btn btn-primary" id="wi-save" ${editor.saving || !dirty() ? 'disabled' : ''}>${editor.saving ? '<span class="spinner"></span> Saving…' : 'Save'}</button><button class="btn btn-secondary" id="wi-cancel" ${editor.saving ? 'disabled' : ''}>Cancel</button></div></div>`;
+      body = `<div class="wi-editor"><div class="wi-editor-status" aria-live="polite">${readOnly ? '<span class="badge b-warning">Confirmed snapshot is read-only</span>' : dirty() ? '<span class="badge b-warning">Unsaved changes</span>' : editor.saved ? '<span class="badge b-completed">Saved</span>' : ''}${editor.error ? `<span class="tiny error-text">${escapeHtml(editor.error)}</span>` : ''}</div><label class="sr-only" for="wi-editor-text">Markdown content</label><textarea id="wi-editor-text" rows="20" spellcheck="false" ${editor.saving || readOnly ? 'disabled' : ''}>${escapeHtml(editor.text)}</textarea>${!readOnly ? `<div class="wi-actions"><button class="btn btn-primary" id="wi-save" ${editor.saving || !dirty() ? 'disabled' : ''}>${editor.saving ? '<span class="spinner"></span> Saving…' : 'Save'}</button><button class="btn btn-secondary" id="wi-cancel" ${editor.saving ? 'disabled' : ''}>Cancel</button></div>` : '<p class="tiny muted">Local unsaved text is not part of the approved snapshot.</p>'}</div>`;
     } else if (p.content && p.content.trim()) {
       const fmt = String(p.content_format || 'markdown').toLowerCase();
       body = (fmt === 'markdown' || fmt === 'md')
@@ -185,18 +198,43 @@ function renderContent() {
 
   const eligible = info.key === 'completed';
   const state = p.is_included ? 'Included in future import' : 'Excluded from future import';
-  const controls = `<div class="wi-draft-controls"><label class="wi-include"><input id="wi-include" type="checkbox" ${p.is_included ? 'checked' : ''} ${!eligible || inclusionBusy.has(String(p.id)) ? 'disabled' : ''}><span>${escapeHtml(state)}</span></label><div class="wi-actions">${eligible && !editor.editing ? '<button type="button" class="btn btn-secondary btn-sm" id="wi-edit">Edit content</button>' : ''}<button type="button" class="btn btn-ghost btn-sm" id="wi-delete" ${deleteBusy.has(String(p.id)) ? 'disabled' : ''}>${deleteBusy.has(String(p.id)) ? 'Deleting…' : 'Delete draft'}</button></div></div>`;
+  const controls = `<div class="wi-draft-controls"><label class="wi-include"><input id="wi-include" type="checkbox" ${p.is_included ? 'checked' : ''} ${readOnly || inclusionBusy.has(String(p.id)) || (!p.is_included && !eligible) ? 'disabled' : ''}><span>${escapeHtml(state)}</span></label><div class="wi-actions">${eligible && !editor.editing && !readOnly ? '<button type="button" class="btn btn-secondary btn-sm" id="wi-edit">Edit content</button>' : ''}<button type="button" class="btn btn-ghost btn-sm" id="wi-delete" ${readOnly || deleteBusy.has(String(p.id)) ? 'disabled' : ''}>${deleteBusy.has(String(p.id)) ? 'Deleting…' : 'Delete draft'}</button></div></div>`;
   w.innerHTML = `<div class="card wi-content">${header}${controls}<div class="wi-content-body">${body}</div></div>`;
   const copy = w.querySelector('#wi-copy');
   if (copy) copy.onclick = async () => {
     if (await copyText(src)) toast('Source URL copied', 'success');
   };
   w.querySelector('#wi-edit')?.addEventListener('click', () => { editor = { id: String(p.id), text: p.content || '', editing: true, saving: false, error: '', saved: false }; renderContent(); w.querySelector('#wi-editor-text')?.focus(); });
-  w.querySelector('#wi-editor-text')?.addEventListener('input', (e) => { editor.text = e.target.value; editor.saved = false; const save = w.querySelector('#wi-save'); if (save) save.disabled = editor.saving || !dirty(); const status = w.querySelector('.wi-editor-status'); if (status) status.innerHTML = dirty() ? '<span class="badge b-warning">Unsaved changes</span>' : ''; });
+  w.querySelector('#wi-editor-text')?.addEventListener('input', (e) => { editor.text = e.target.value; editor.saved = false; const save = w.querySelector('#wi-save'); if (save) save.disabled = editor.saving || !dirty(); const status = w.querySelector('.wi-editor-status'); if (status) status.innerHTML = dirty() ? '<span class="badge b-warning">Unsaved changes</span>' : ''; renderHeader(); });
   w.querySelector('#wi-save')?.addEventListener('click', saveDraft);
-  w.querySelector('#wi-cancel')?.addEventListener('click', () => { editor.text = p.content || ''; editor.editing = false; editor.error = ''; editor.saved = false; renderContent(); });
+  w.querySelector('#wi-cancel')?.addEventListener('click', () => { editor.text = p.content || ''; editor.editing = false; editor.error = ''; editor.saved = false; render(); });
   w.querySelector('#wi-include')?.addEventListener('change', (e) => updateInclusion(p, e.target.checked));
   w.querySelector('#wi-delete')?.addEventListener('click', () => deleteDraft(p));
+}
+
+async function confirmImport() {
+  if (confirming) return;
+  const summary = confirmationSummary(session, pages, { unsaved: dirty(), confirming });
+  if (!summary.canConfirm) return;
+  const { el, close } = openModal(`<div class="modal-head"><h3>Confirm webpage import?</h3><button class="icon-btn" data-cancel aria-label="Cancel">✕</button></div><div class="modal-body"><p>Confirm ${summary.included} included page${summary.included === 1 ? '' : 's'}?</p><ul><li>Only included pages will be approved.</li><li>Saved edits will be included; excluded pages will stay out.</li><li>Confirmation records an approved snapshot.</li><li>RAG indexing and search availability happen in a later processing step.</li></ul></div><div class="modal-foot"><button class="btn btn-secondary" data-cancel>Cancel</button><button class="btn btn-primary" id="wi-confirm-submit">Confirm ${summary.included} page${summary.included === 1 ? '' : 's'}</button></div>`);
+  el.querySelectorAll('[data-cancel]').forEach(b => b.onclick = () => close());
+  el.querySelector('#wi-confirm-submit').onclick = async (event) => {
+    if (confirming) return;
+    confirming = true; event.currentTarget.disabled = true; event.currentTarget.innerHTML = '<span class="spinner"></span> Confirming…'; renderHeader();
+    try {
+      confirmation = await requestWebImportConfirmation(apiFetch, ENDPOINTS.webImportConfirm(orgId, kbId, importId));
+      session = { ...session, status: confirmation.status, confirmed_at: confirmation.confirmed_at, page_count: confirmation.page_count, included_pages: confirmation.page_count };
+      confirming = false; close(); render(); stopPolling(); toast('Import confirmed', 'success');
+    } catch (e) {
+      confirming = false;
+      const message = e?.status === 400 || e?.status === 409 ? (e.message || 'The server could not confirm these pages. Review the import and try again.') : 'Could not reach the server to confirm. Your drafts are unchanged; you can retry.';
+      const alert = el.querySelector('.modal-body');
+      alert?.querySelector('[role="alert"]')?.remove();
+      if (alert) alert.insertAdjacentHTML('beforeend', `<div class="alert alert-warning mt1" role="alert">${escapeHtml(message)}</div>`);
+      event.currentTarget.disabled = false; event.currentTarget.textContent = `Retry confirmation`;
+      renderHeader();
+    }
+  };
 }
 
 async function canLeaveEditor() {
@@ -210,7 +248,7 @@ async function canLeaveEditor() {
 }
 
 async function saveDraft() {
-  if (!editor.editing || editor.saving || !dirty()) return false;
+  if (session.status === 'confirmed' || !editor.editing || editor.saving || !dirty()) return false;
   const id = editor.id; editor.saving = true; editor.error = ''; renderContent();
   try {
     const res = await apiFetch(ENDPOINTS.webImportPage(orgId, importId, encodeURIComponent(id)), { method: 'PATCH', body: { content: editor.text } });
@@ -222,7 +260,7 @@ async function saveDraft() {
 }
 
 async function updateInclusion(p, included) {
-  const id = String(p.id); if (inclusionBusy.has(id)) return;
+  const id = String(p.id); if (session.status === 'confirmed' || inclusionBusy.has(id)) return;
   inclusionBusy.add(id); inclusionPending.set(id, included); renderContent();
   try {
     const res = await apiFetch(ENDPOINTS.webImportPage(orgId, importId, encodeURIComponent(id)), { method: 'PATCH', body: { is_included: included } });
@@ -234,7 +272,7 @@ async function updateInclusion(p, included) {
 }
 
 async function deleteDraft(p) {
-  const id = String(p.id); if (deleteBusy.has(id)) return;
+  const id = String(p.id); if (session.status === 'confirmed' || deleteBusy.has(id)) return;
   const ok = await confirmDialog({ title: 'Delete this draft?', body: 'This removes the draft from the current review session. It does not delete content already indexed in the knowledge base.', confirmText: 'Delete draft' });
   if (!ok || deleteBusy.has(id)) return;
   deleteBusy.add(id); renderContent();
@@ -290,7 +328,9 @@ function applyData(statusRes, pagesRes) {
 
 function onUpdate({ session: s, pages: p }) {
   if (!mounted) return;
-  session = s;
+  session = session.status === 'confirmed'
+    ? { ...s, status: 'confirmed', confirmed_at: session.confirmed_at || s.confirmed_at, page_count: session.page_count || s.page_count, included_pages: session.included_pages || s.included_pages }
+    : s;
   pages = mergePolledPages(p, pages, { editingId: editor.editing ? editor.id : null, editorText: editor.text, pendingInclusion: inclusionPending });
   selectedId = resolveSelectedId(pages, selectedId);
   renderPollWarn(0);
