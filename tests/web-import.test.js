@@ -23,6 +23,7 @@ import {
   ingestionPageStatusInfo,
   ingestionCounts,
   approvedPagesForDisplay,
+  normalizeIngestionPage,
   requestWebImportIngestion,
   shouldPollImport,
   isIngestionTerminal,
@@ -103,6 +104,9 @@ test('pageStatusInfo maps every backend page status to a labeled badge', () => {
   assert.equal(pageStatusInfo('completed').badge, 'b-completed');
   assert.equal(pageStatusInfo('failed').key, 'failed');
   assert.equal(pageStatusInfo('').label, 'Pending');
+  // Documents parked awaiting confirmation count as completed but are labelled distinctly.
+  assert.deepEqual(pageStatusInfo('ready_for_review'), { key: 'completed', label: 'Ready for review', badge: 'b-warning' });
+  assert.equal(isPageTerminal('ready_for_review'), true);
 });
 
 test('terminal checks use the backend status values', () => {
@@ -239,25 +243,39 @@ test('poll merging uses server state when no local mutation is pending', () => {
   assert.equal(merged[0].is_included, false);
 });
 
-test('confirmation summary counts staged, included, excluded and attention pages', () => {
+test('confirmation summary counts scraped pages, missing content and scrape failures', () => {
   const pages = [
-    { id: 'a', status: 'completed', content: '# A', is_included: true },
-    { id: 'b', status: 'failed', content: '', is_included: true },
-    { id: 'c', status: 'failed', content: '', is_included: false },
+    { id: 'a', status: 'ready_for_review', content: '# A' },
+    { id: 'b', status: 'failed', content: '' },
+    { id: 'c', status: 'failed', content: '' },
   ];
+  // Failed scrapes no longer block: every page is staged and confirm only needs
+  // at least one page with content and nothing still scraping.
   assert.deepEqual(confirmationSummary({ status: 'partially_failed' }, pages), {
-    total: 3, included: 2, excluded: 1, eligible: 1, attention: 1, scraping: false, confirmed: false, canConfirm: false,
+    total: 3, included: 3, excluded: 0, eligible: 1, attention: 0, scraping: false, confirmed: false, canConfirm: true,
   });
+
+  const mixed = [
+    { id: 'a', status: 'ready_for_review', content: '# A' },
+    { id: 'b', status: 'ready_for_review', content: '   ' },
+    { id: 'c', status: 'processing', content: '' },
+  ];
+  const sum = confirmationSummary({ status: 'processing' }, mixed);
+  assert.equal(sum.eligible, 1);
+  assert.equal(sum.attention, 1); // scraped but empty
+  assert.equal(sum.scraping, true); // one page still processing
+  assert.equal(sum.canConfirm, false);
 });
 
-test('confirmation is disabled for empty, excluded, scraping, unsaved and confirmed imports', () => {
-  const ready = [{ status: 'completed', content: 'Saved markdown', is_included: true }];
+test('confirmation is disabled for empty, no-content, scraping, unsaved and confirmed imports', () => {
+  const ready = [{ status: 'ready_for_review', content: 'Saved markdown' }];
   assert.equal(confirmationSummary({ status: 'ready_for_review' }, []).canConfirm, false);
-  assert.equal(confirmationSummary({ status: 'ready_for_review' }, [{ ...ready[0], is_included: false }]).canConfirm, false);
+  assert.equal(confirmationSummary({ status: 'ready_for_review' }, [{ status: 'ready_for_review', content: '' }]).canConfirm, false);
   assert.equal(confirmationSummary({ status: 'processing' }, ready).canConfirm, false);
   assert.equal(confirmationSummary({ status: 'ready_for_review' }, ready, { unsaved: true }).canConfirm, false);
   assert.equal(confirmationSummary({ status: 'ready_for_review' }, ready, { confirming: true }).canConfirm, false);
   assert.equal(confirmationSummary({ status: 'confirmed' }, ready).canConfirm, false);
+  assert.equal(confirmationSummary({ status: 'ready_for_review' }, ready).canConfirm, true);
 });
 
 test('confirmation API helper posts an empty body and requires backend confirmed status', async () => {
@@ -333,6 +351,28 @@ test('approved page display uses immutable snapshot page statuses and only appro
   assert.equal(displayed[0].content, 'approved body');
   assert.equal(displayed[0].ingestion_status, 'ready');
 });
+
+test('approved page display keeps content when the snapshot keys pages by document id', () => {
+  // Current backend: ingestion_pages carry the document id (no source_draft_id)
+  // and expose the document `status` instead of `ingestion_status`.
+  const displayed = approvedPagesForDisplay(
+    [{ id: 'doc1', content: '# Confirmed body', word_count: 3, status: 'ready_for_review' }],
+    [{ id: 'doc1', status: 'ready_for_review', url: 'https://a.test' }],
+  );
+  assert.equal(displayed.length, 1);
+  assert.equal(displayed[0].content, '# Confirmed body');
+  assert.equal(displayed[0].id, 'doc1');
+});
+
+test('normalizeIngestionPage maps a document status into the ingestion vocabulary', () => {
+  assert.equal(normalizeIngestionPage({ id: 'doc1', status: 'ready_for_review' }).ingestion_status, 'pending');
+  assert.equal(normalizeIngestionPage({ id: 'doc1', status: 'processing' }).ingestion_status, 'processing');
+  assert.equal(normalizeIngestionPage({ id: 'doc1', status: 'ready' }).ingestion_status, 'ready');
+  assert.equal(normalizeIngestionPage({ id: 'doc1', status: 'failed' }).ingestion_status, 'failed');
+  // Reads error from either key.
+  assert.equal(normalizeIngestionPage({ id: 'doc1', error: 'boom' }).ingestion_error, 'boom');
+});
+
 
 test('ingestion summary counts approved, indexed, failed, processing and waiting pages', () => {
   assert.deepEqual(ingestionCounts({
@@ -606,3 +646,13 @@ test('the review page only uses the explicit import-ingestion endpoint and never
   assert.match(page, /if \(ingestionstarting\) \{ close\(\); return; \}/);
   assert.match(page, /session\.status === 'confirmed'/);
 });
+
+test('the review page edits/deletes via document endpoints, not the removed page route', () => {
+  const page = src('../js/pages/web-import.js').toLowerCase();
+  const cfg = src('../js/config.js').toLowerCase();
+  assert.match(page, /endpoints\.documentcontent/);
+  assert.match(page, /endpoints\.documentdetail/);
+  assert.ok(!page.includes('webimportpage('), 'must not call the removed page PATCH/DELETE route');
+  assert.ok(!cfg.includes('webimportpage:'), 'the removed page route must not be exposed');
+});
+

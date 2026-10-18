@@ -22,9 +22,14 @@ const PROCESSING = ['processing', 'scraping', 'running', 'in_progress', 'in-prog
 const COMPLETED = ['completed', 'complete', 'done', 'ready', 'success', 'succeeded', 'scraped'];
 const FAILED = ['failed', 'error', 'errored'];
 
-/** Map a raw page status to a stable {key,label,badge} used by the UI. */
+/**
+ * Map a raw page/document status to a stable {key,label,badge} used by the UI.
+ * `ready_for_review` is a completed scrape awaiting confirmation — it counts as
+ * 'completed' for progress/eligibility, but is labelled distinctly.
+ */
 export function pageStatusInfo(raw) {
   const v = String(raw ?? '').toLowerCase();
+  if (v === 'ready_for_review') return { key: 'completed', label: 'Ready for review', badge: 'b-warning' };
   if (PROCESSING.includes(v)) return { key: 'processing', label: 'Scraping', badge: 'b-processing' };
   if (COMPLETED.includes(v)) return { key: 'completed', label: 'Scraped', badge: 'b-completed' };
   if (FAILED.includes(v)) return { key: 'failed', label: 'Failed', badge: 'b-failed' };
@@ -75,7 +80,7 @@ export function shouldPollImport(session = {}) {
 
 export function ingestionPageStatusInfo(raw) {
   const v = String(raw ?? '').toLowerCase();
-  if (v === 'pending') return { key: v, label: 'Waiting', badge: 'b-pending' };
+  if (v === 'pending' || v === 'ready_for_review') return { key: 'pending', label: 'Waiting', badge: 'b-pending' };
   if (v === 'processing') return { key: v, label: 'Processing', badge: 'b-processing' };
   if (v === 'ready') return { key: v, label: 'Indexed', badge: 'b-completed' };
   if (v === 'failed') return { key: v, label: 'Failed', badge: 'b-failed' };
@@ -154,26 +159,32 @@ export function normalizeSession(res) {
 
 export function normalizeIngestionPage(p) {
   const r = p && typeof p === 'object' ? p : {};
+  // The session's ingestion_pages serializer exposes the document `status`
+  // (ready_for_review/pending/processing/ready/failed); map it into the
+  // ingestion vocabulary so labels and counts stay accurate.
+  const rawStatus = r.ingestion_status || r.status || 'pending';
   return {
-    id: r.id || null,
+    id: r.id || r.document_id || null,
     source_draft_id: r.source_draft_id || null,
     url: r.url || '',
     final_url: r.final_url || '',
     title: r.title || '',
-    ingestion_status: r.ingestion_status || 'pending',
-    ingestion_error: typeof r.ingestion_error === 'string' ? r.ingestion_error : '',
+    ingestion_status: String(rawStatus).toLowerCase() === 'ready_for_review' ? 'pending' : rawStatus,
+    ingestion_error: typeof r.ingestion_error === 'string' ? r.ingestion_error : (typeof r.error === 'string' ? r.error : ''),
     ingestion_started_at: r.ingestion_started_at || null,
     ingested_at: r.ingested_at || null,
-    document_id: r.document_id || null,
+    document_id: r.document_id || r.id || null,
   };
 }
 
 export function approvedPagesForDisplay(drafts = [], snapshotPages = null) {
   const source = Array.isArray(drafts) ? drafts : [];
-  if (!Array.isArray(snapshotPages)) return source.filter(p => p.is_included);
-  const byDraftId = new Map(source.map(p => [String(p.id), p]));
+  if (!Array.isArray(snapshotPages)) return source;
+  const byId = new Map(source.map(p => [String(p.id), p]));
   return snapshotPages.map((snapshot) => {
-    const draft = byDraftId.get(String(snapshot.source_draft_id));
+    // The ingestion snapshot may key pages by source_draft_id (legacy) or by the
+    // document id itself (current backend). Try both so content is never lost.
+    const draft = byId.get(String(snapshot.source_draft_id)) || byId.get(String(snapshot.id));
     return {
       ...(draft || {}),
       id: draft?.id || snapshot.source_draft_id || snapshot.id,
@@ -182,12 +193,13 @@ export function approvedPagesForDisplay(drafts = [], snapshotPages = null) {
       url: snapshot.url || draft?.url || '',
       final_url: snapshot.final_url || draft?.final_url || '',
       title: snapshot.title || draft?.title || '',
+      content: draft?.content ?? snapshot.content ?? '',
       is_included: true,
-      ingestion_status: snapshot.ingestion_status,
+      ingestion_status: snapshot.ingestion_status || snapshot.status,
       ingestion_error: snapshot.ingestion_error,
       ingestion_started_at: snapshot.ingestion_started_at,
       ingested_at: snapshot.ingested_at,
-      document_id: snapshot.document_id,
+      document_id: snapshot.document_id || draft?.id || snapshot.id,
     };
   });
 }
@@ -220,18 +232,23 @@ export async function requestWebImportIngestion(request, endpoint) {
   };
 }
 
-/** Counts and eligibility for the Part 4 confirmation action. */
+/**
+ * Counts and eligibility for confirmation. Documents are confirmed in bulk:
+ * there is no per-page include/exclude anymore — every scraped page is staged.
+ * `eligible` = pages ready for review with content; `attention` = pages that
+ * finished scraping but produced no content. Scrape-failed pages do not block
+ * confirmation (the backend auto-promotes once all remaining docs settle).
+ */
 export function confirmationSummary(session = {}, pages = [], { unsaved = false, confirming = false } = {}) {
   const list = Array.isArray(pages) ? pages : [];
-  const included = list.filter(p => p?.is_included);
-  const excluded = list.length - included.length;
-  const attention = included.filter(p => pageStatusInfo(p?.status).key !== 'completed' || !String(p?.content || '').trim()).length;
-  const eligible = included.length - attention;
+  const ready = list.filter(p => pageStatusInfo(p?.status).key === 'completed');
+  const eligible = ready.filter(p => String(p?.content || '').trim()).length;
+  const attention = ready.length - eligible;
   const scraping = ['pending', 'processing'].includes(String(session?.status || '').toLowerCase()) ||
     list.some(p => ['pending', 'processing'].includes(pageStatusInfo(p?.status).key));
   const confirmed = String(session?.status || '').toLowerCase() === 'confirmed';
   const canConfirm = !confirmed && !scraping && eligible > 0 && attention === 0 && !unsaved && !confirming;
-  return { total: list.length, included: included.length, excluded, eligible, attention, scraping, confirmed, canConfirm };
+  return { total: list.length, included: list.length, excluded: 0, eligible, attention, scraping, confirmed, canConfirm };
 }
 
 /** Send the Part 4A confirmation request and accept only its confirmed response. */
@@ -263,6 +280,7 @@ export function normalizePage(p) {
     is_included: r.is_included !== false,
     error: r.error || r.error_message || '',
     scraped_at: r.scraped_at || null,
+    confirmed_at: r.confirmed_at || null,
   };
 }
 

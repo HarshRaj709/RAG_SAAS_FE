@@ -53,8 +53,6 @@ let ingestionStarting = false;
 let statusRefreshing = false;
 let confirmation = null;
 let pollFatal = false;
-const inclusionPending = new Map();
-const inclusionBusy = new Set();
 const deleteBusy = new Set();
 const dirty = () => editor.editing && pages.find(p => String(p.id) === String(editor.id))?.content !== editor.text;
 
@@ -109,7 +107,7 @@ function renderHeader() {
   const confirmedCount = confirmation?.page_count ?? (session.page_count || session.approved_page_count || session.confirmed_page_count || session.included_pages || 0);
   const confirmationBlock = summary.confirmed
     ? `<section class="wi-confirmed" aria-live="polite"><div><span class="badge b-completed">Import confirmed</span><strong>${confirmedCount} page${confirmedCount === 1 ? '' : 's'} approved</strong>${confirmedAt ? `<span class="tiny muted">Confirmed ${escapeHtml(timeAgo(confirmedAt))}</span>` : ''}</div><p class="tiny muted">The approved snapshot is saved and read-only.</p></section>${renderIngestionPanel(ingestionInfo, counts)}`
-    : `<section class="wi-confirm-panel"><div><h3>Confirm Import</h3><p class="tiny muted">${summary.total} staged · ${summary.included} included · ${summary.excluded} excluded · ${summary.eligible} eligible · ${summary.attention} require attention</p>${summary.scraping ? '<p class="tiny muted">Wait for scraping to finish before confirming.</p>' : summary.attention ? '<p class="tiny muted">Exclude or resolve included pages that failed, are incomplete, or have no content.</p>' : dirty() ? '<p class="tiny muted">Save or cancel your unsaved edits before confirming.</p>' : ''}</div><button class="btn btn-primary" id="wi-confirm" ${summary.canConfirm ? '' : 'disabled'}>${confirming ? '<span class="spinner"></span> Confirming…' : 'Confirm Import'}</button></section>`;
+    : `<section class="wi-confirm-panel"><div><h3>Confirm Import</h3><p class="tiny muted">${summary.total} page${summary.total === 1 ? '' : 's'} scraped · ${summary.eligible} ready to confirm · ${summary.attention} missing content</p>${summary.scraping ? '<p class="tiny muted">Wait for scraping to finish before confirming.</p>' : summary.attention ? '<p class="tiny muted">Resolve pages that finished scraping but produced no content.</p>' : dirty() ? '<p class="tiny muted">Save or cancel your unsaved edits before confirming.</p>' : ''}</div><button class="btn btn-primary" id="wi-confirm" ${summary.canConfirm ? '' : 'disabled'}>${confirming ? '<span class="spinner"></span> Confirming…' : 'Confirm Import'}</button></section>`;
   w.innerHTML = `
     <div class="page-head">
       <div>
@@ -124,7 +122,7 @@ function renderHeader() {
         <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${prog.percent}" aria-label="Pages scraped">
           <div style="width:${prog.percent}%"></div>
         </div>
-        <div class="tiny muted mt1">${pages.filter(p => p.is_included).length} included · ${pages.filter(p => !p.is_included).length} excluded. These are drafts — nothing is added to the knowledge base yet.</div>
+        <div class="tiny muted mt1">${pages.filter(p => pageStatusInfo(p.status).key === 'completed').length} scraped · ${pages.filter(p => pageStatusInfo(p.status).key === 'failed').length} failed. These are drafts — nothing is added to the knowledge base yet.</div>
       </div>`}
     </div>
     ${confirmationBlock}
@@ -180,7 +178,7 @@ function renderList() {
         </span>
         <span class="wi-row-meta">
           <span class="badge ${info.badge}">${escapeHtml(info.label)}</span>
-          ${session.status === 'confirmed' ? '<span class="tiny wi-inclusion is-included">Approved</span>' : `<span class="tiny wi-inclusion ${p.is_included ? 'is-included' : ''}">${p.is_included ? 'Included' : 'Excluded'}</span>`}
+          ${session.status === 'confirmed' ? '<span class="tiny wi-inclusion is-included">Approved</span>' : ''}
           ${wc}
         </span>
       </button>`;
@@ -250,10 +248,9 @@ function renderContent() {
   }
 
   const eligible = info.key === 'completed';
-  const state = p.is_included ? 'Included in future import' : 'Excluded from future import';
   const controls = readOnly
     ? `<div class="wi-draft-controls"><span class="tiny wi-inclusion is-included">Approved snapshot · read-only</span></div>`
-    : `<div class="wi-draft-controls"><label class="wi-include"><input id="wi-include" type="checkbox" ${p.is_included ? 'checked' : ''} ${inclusionBusy.has(String(p.id)) || (!p.is_included && !eligible) ? 'disabled' : ''}><span>${escapeHtml(state)}</span></label><div class="wi-actions">${eligible && !editor.editing ? '<button type="button" class="btn btn-secondary btn-sm" id="wi-edit">Edit content</button>' : ''}<button type="button" class="btn btn-ghost btn-sm" id="wi-delete" ${deleteBusy.has(String(p.id)) ? 'disabled' : ''}>${deleteBusy.has(String(p.id)) ? 'Deleting…' : 'Delete draft'}</button></div></div>`;
+    : `<div class="wi-draft-controls"><span class="tiny muted">Not added to the knowledge base until you confirm.</span><div class="wi-actions">${eligible && !editor.editing ? '<button type="button" class="btn btn-secondary btn-sm" id="wi-edit">Edit content</button>' : ''}<button type="button" class="btn btn-ghost btn-sm" id="wi-delete" ${deleteBusy.has(String(p.id)) ? 'disabled' : ''}>${deleteBusy.has(String(p.id)) ? 'Deleting…' : 'Delete'}</button></div></div>`;
   w.innerHTML = `<div class="card wi-content">${header}${controls}<div class="wi-content-body">${body}</div></div>`;
   const copy = w.querySelector('#wi-copy');
   if (copy) copy.onclick = async () => {
@@ -263,7 +260,6 @@ function renderContent() {
   w.querySelector('#wi-editor-text')?.addEventListener('input', (e) => { editor.text = e.target.value; editor.saved = false; const save = w.querySelector('#wi-save'); if (save) save.disabled = editor.saving || !dirty(); const status = w.querySelector('.wi-editor-status'); if (status) status.innerHTML = dirty() ? '<span class="badge b-warning">Unsaved changes</span>' : ''; renderHeader(); });
   w.querySelector('#wi-save')?.addEventListener('click', saveDraft);
   w.querySelector('#wi-cancel')?.addEventListener('click', () => { editor.text = p.content || ''; editor.editing = false; editor.error = ''; editor.saved = false; render(); });
-  w.querySelector('#wi-include')?.addEventListener('change', (e) => updateInclusion(p, e.target.checked));
   w.querySelector('#wi-delete')?.addEventListener('click', () => deleteDraft(p));
 }
 
@@ -271,7 +267,7 @@ async function confirmImport() {
   if (confirming) return;
   const summary = confirmationSummary(session, pages, { unsaved: dirty(), confirming });
   if (!summary.canConfirm) return;
-  const { el, close } = openModal(`<div class="modal-head"><h3>Confirm webpage import?</h3><button class="icon-btn" data-cancel aria-label="Cancel">✕</button></div><div class="modal-body"><p>Confirm ${summary.included} included page${summary.included === 1 ? '' : 's'}?</p><ul><li>Only included pages will be approved.</li><li>Saved edits will be included; excluded pages will stay out.</li><li>Confirmation records an approved snapshot.</li><li>RAG indexing and search availability happen in a later processing step.</li></ul></div><div class="modal-foot"><button class="btn btn-secondary" data-cancel>Cancel</button><button class="btn btn-primary" id="wi-confirm-submit">Confirm ${summary.included} page${summary.included === 1 ? '' : 's'}</button></div>`);
+  const { el, close } = openModal(`<div class="modal-head"><h3>Confirm webpage import?</h3><button class="icon-btn" data-cancel aria-label="Cancel">✕</button></div><div class="modal-body"><p>Confirm ${summary.eligible} page${summary.eligible === 1 ? '' : 's'} ready for review?</p><ul><li>Every page that finished scraping will be confirmed.</li><li>Saved edits are included; pages that failed to scrape are skipped.</li><li>Confirmation records an approved snapshot.</li><li>RAG indexing and search availability happen in a later processing step.</li></ul></div><div class="modal-foot"><button class="btn btn-secondary" data-cancel>Cancel</button><button class="btn btn-primary" id="wi-confirm-submit">Confirm ${summary.eligible} page${summary.eligible === 1 ? '' : 's'}</button></div>`);
   el.querySelectorAll('[data-cancel]').forEach(b => b.onclick = () => close());
   el.querySelector('#wi-confirm-submit').onclick = async (event) => {
     if (confirming) return;
@@ -357,33 +353,23 @@ async function saveDraft() {
   if (session.status === 'confirmed' || !editor.editing || editor.saving || !dirty()) return false;
   const id = editor.id; editor.saving = true; editor.error = ''; renderContent();
   try {
-    const res = await apiFetch(ENDPOINTS.webImportPage(orgId, importId, encodeURIComponent(id)), { method: 'PATCH', body: { content: editor.text } });
-    const response = res?.page || res || {};
+    // Page-draft PATCH was removed; edit the underlying document's content instead.
+    const res = await apiFetch(ENDPOINTS.documentContent(orgId, kbId, encodeURIComponent(id)), { method: 'PATCH', body: { content: editor.text } });
+    const response = res?.document || res?.page || res || {};
     pages = pages.map(p => String(p.id) === id ? { ...p, ...response, id: p.id, content: response.content ?? editor.text, word_count: response.word_count ?? editor.text.trim().split(/\s+/).filter(Boolean).length } : p);
     editor.text = pages.find(p => String(p.id) === id)?.content || editor.text;
-    editor.saving = false; editor.editing = false; editor.saved = true; render(); toast('Draft saved', 'success'); return true;
-  } catch (e) { editor.saving = false; editor.error = e?.status && e.status < 500 ? e.message : 'Could not save this draft. Try again.'; renderContent(); return false; }
-}
-
-async function updateInclusion(p, included) {
-  const id = String(p.id); if (session.status === 'confirmed' || inclusionBusy.has(id)) return;
-  inclusionBusy.add(id); inclusionPending.set(id, included); renderContent();
-  try {
-    const res = await apiFetch(ENDPOINTS.webImportPage(orgId, importId, encodeURIComponent(id)), { method: 'PATCH', body: { is_included: included } });
-    const updated = res?.page || res || {};
-    pages = pages.map(x => String(x.id) === id ? { ...x, ...updated, id: x.id, is_included: updated.is_included ?? included } : x);
-    inclusionPending.delete(id); render();
-  } catch (e) { inclusionPending.delete(id); toast(e?.status && e.status < 500 ? e.message : 'Could not update inclusion. Try again.', 'error'); renderContent(); }
-  finally { inclusionBusy.delete(id); }
+    editor.saving = false; editor.editing = false; editor.saved = true; render(); toast('Content saved', 'success'); return true;
+  } catch (e) { editor.saving = false; editor.error = e?.status && e.status < 500 ? e.message : 'Could not save this content. Try again.'; renderContent(); return false; }
 }
 
 async function deleteDraft(p) {
   const id = String(p.id); if (session.status === 'confirmed' || deleteBusy.has(id)) return;
-  const ok = await confirmDialog({ title: 'Delete this draft?', body: 'This removes the draft from the current review session. It does not delete content already indexed in the knowledge base.', confirmText: 'Delete draft' });
+  const ok = await confirmDialog({ title: 'Delete this page?', body: 'This removes the page (and its document) from the current review session. It does not delete content already indexed in the knowledge base.', confirmText: 'Delete' });
   if (!ok || deleteBusy.has(id)) return;
   deleteBusy.add(id); renderContent();
   try {
-    await apiFetch(ENDPOINTS.webImportPage(orgId, importId, encodeURIComponent(id)), { method: 'DELETE' });
+    // Page-draft DELETE was removed; delete the document itself.
+    await apiFetch(ENDPOINTS.documentDetail(orgId, kbId, encodeURIComponent(id)), { method: 'DELETE' });
     pages = pages.filter(x => String(x.id) !== id);
     session.total_pages = pages.length;
     session.completed_pages = pages.filter(x => pageStatusInfo(x.status).key === 'completed').length;
@@ -392,8 +378,8 @@ async function deleteDraft(p) {
     session.pending_pages = pages.filter(x => pageStatusInfo(x.status).key === 'pending').length;
     if (editor.id === id) editor = { id: null, text: '', editing: false, saving: false, error: '', saved: false };
     const preferred = selectedId === id ? (pages.find(x => pageStatusInfo(x.status).key === 'completed')?.id ?? null) : selectedId;
-    selectedId = resolveSelectedId(pages, preferred); render(); toast('Draft deleted', 'success');
-  } catch (e) { deleteBusy.delete(id); toast(e?.status && e.status < 500 ? e.message : 'Could not delete this draft. Try again.', 'error'); renderContent(); return; }
+    selectedId = resolveSelectedId(pages, preferred); render(); toast('Page deleted', 'success');
+  } catch (e) { deleteBusy.delete(id); toast(e?.status && e.status < 500 ? e.message : 'Could not delete this page. Try again.', 'error'); renderContent(); return; }
   deleteBusy.delete(id);
 }
 
@@ -437,7 +423,7 @@ function onUpdate({ session: s, pages: p }) {
   session = session.status === 'confirmed'
     ? { ...s, status: 'confirmed', confirmed_at: session.confirmed_at || s.confirmed_at, page_count: session.page_count || s.page_count, included_pages: session.included_pages || s.included_pages }
     : s;
-  pages = mergePolledPages(p, pages, { editingId: editor.editing ? editor.id : null, editorText: editor.text, pendingInclusion: inclusionPending });
+  pages = mergePolledPages(p, pages, { editingId: editor.editing ? editor.id : null, editorText: editor.text });
   selectedId = resolveSelectedId(visiblePages(), selectedId);
   pollFatal = false;
   renderPollWarn(0);

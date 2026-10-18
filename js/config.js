@@ -1,6 +1,6 @@
 /** Central API configuration. Edit ONLY here when backend paths differ. */
 try { localStorage.removeItem('rag_api_base'); } catch { /* ignore — stale override from removed Settings UI */ }
-export const API_BASE_URL = (localStorage.getItem('rag_api_base') || 'http://localhost:8000/').trim().replace(/\/+$/, '');
+export const API_BASE_URL = (localStorage.getItem('rag_api_base') || 'https://rag-chat-bot-5yva.onrender.com/').trim().replace(/\/+$/, '');
 export const USE_MOCK = false; // set true to demo UI offline with fake data
 /** Google OAuth client ID. Paste your Web client ID here, or set localStorage 'rag_google_cid'. Empty = Google buttons hidden. */
 export const GOOGLE_CLIENT_ID = (localStorage.getItem('rag_google_cid') || '1098189772889-3mpemau29ut364viqh3nd86oqkt6c0sk.apps.googleusercontent.com').trim();
@@ -33,9 +33,10 @@ export const ENDPOINTS = {
   // Web import (scrape -> review).
   webImports: (orgId, kbId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/web-imports/`, // GET -> past sessions (paginated); POST {urls} -> 202 {import_id, pages}
   webImportDetail: (orgId, importId) => `/api/knowledge_base/orgs/${orgId}/web-imports/${importId}/`, // GET session status + counts; DELETE discards unconfirmed drafts
-  webImportPages: (orgId, importId) => `/api/knowledge_base/orgs/${orgId}/web-imports/${importId}/pages/`, // GET persisted drafts
-  webImportPage: (orgId, importId, pageId) => `/api/knowledge_base/orgs/${orgId}/web-imports/${importId}/pages/${pageId}/`, // PATCH editable fields; DELETE draft
-  webImportConfirm: (orgId, kbId, importId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/web-imports/${importId}/confirm/`, // POST {} -> confirmed snapshot metadata
+  webImportPages: (orgId, importId) => `/api/knowledge_base/orgs/${orgId}/web-imports/${importId}/pages/`, // GET the session's documents (url = source_url, status, content, word_count, confirmed_at, error)
+  // NOTE: PATCH/DELETE .../web-imports/{id}/pages/{page_id}/ was removed by the
+  // backend. Edit content via documents/{doc}/content/ and delete via documents/{doc}/.
+  webImportConfirm: (orgId, kbId, importId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/web-imports/${importId}/confirm/`, // POST {} -> confirms all ready_for_review docs; 409 while scrapes are in flight
   webImportIngest: (orgId, kbId, importId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/web-imports/${importId}/ingest/`, // POST {} -> queued ingestion summary
   documentDetail: (orgId, kbId, docId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/documents/${docId}/`, // GET status, DELETE single doc
   documentRetry: (orgId, kbId, docId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/documents/${docId}/retry/`, // POST retry: extraction if unconfirmed, embedding if confirmed; 409 while ready_for_review
