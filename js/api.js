@@ -103,7 +103,13 @@ function mockResponse(method, path, body) {
     const pages = ['/docs', '/docs/quickstart', '/docs/api', '/docs/api/auth', '/docs/webhooks', '/pricing', '/blog/launch', '/about'];
     return { count: pages.length, root_url: root, pages: pages.map((p, i) => ({ url: root + p, title: p.split('/').pop().replace(/-/g, ' '), depth: p.split('/').length - 2 })) };
   }
-  if (path.includes('/kbs/') && (path.includes('/documents') || path.includes('/ingest'))) return body instanceof FormData ? { id: 'd' + (mockSeed++), filename: 'upload.pdf', status: 'pending', chunk_count: 0, created_at: new Date().toISOString() } : [];
+  if (path.includes('/documents/') && path.endsWith('/content/')) {
+    if (method === 'PATCH') return { content: body?.content ?? '', word_count: String(body?.content || '').split(/\s+/).filter(Boolean).length, editable: true };
+    return { content: '# Mock document\n\nThis is the **extracted** content of the uploaded file.\n\n- Edit me before confirming\n- Confirmation freezes the content', original_content: '# Mock document\n\nThis is the **extracted** content of the uploaded file.\n\n- Edit me before confirming\n- Confirmation freezes the content', word_count: 28, editable: true, error: '' };
+  }
+  if (path.includes('/documents/') && path.endsWith('/confirm/')) return { confirmed_at: new Date().toISOString(), word_count: 28, already_confirmed: false };
+  if (path.includes('/documents/') && path.endsWith('/ingest/')) return { status: 'processing', chunk_count: 3, already_processing: false };
+  if (path.includes('/kbs/') && (path.includes('/documents') || path.includes('/ingest'))) return body instanceof FormData ? { id: 'd' + (mockSeed++), filename: 'upload.pdf', status: 'pending', chunk_count: 0, word_count: 0, confirmed_at: null, created_at: new Date().toISOString() } : [];
   if (path.endsWith('/kbs/')) return method === 'POST' ? { id: 'kb1', ...body, document_count: 0, total_chunks: 0, created_at: new Date().toISOString() } : [{ id: 'kb1', name: 'Help Center', description: 'Support docs', document_count: 4, total_chunks: 128, created_at: new Date().toISOString() }];
   if (path.endsWith('/bots/')) return method === 'POST' ? { id: 'b1', slug: 'acme-support', api_key: 'rag_demo_key_123456', ...body } : [{ id: 'b1', name: 'Support Bot', slug: 'acme-support', knowledge_bases: ['kb1'], created_at: new Date().toISOString() }];
   if (path.includes('/chat/')) return { answer: 'This is a **mock answer** grounded in your docs. (Enable backend for real RAG.)', sources: [{ filename: 'help.md', score: 0.91 }] };

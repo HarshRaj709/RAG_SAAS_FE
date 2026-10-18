@@ -4,6 +4,7 @@ import { apiFetch, asList } from '../api.js';
 import { ENDPOINTS } from '../config.js';
 import { toast, skeletonList, emptyState } from '../ui.js';
 import { escapeHtml, timeAgo } from '../utils.js';
+import { docStatusInfo } from './doc-review-controller.js';
 
 initTheme();
 
@@ -45,7 +46,7 @@ async function main() {
       return 0;
     };
     let docs = [];
-    for (const kb of kbs) docs.push(...(kbDocsArr(kb) || []).map(x => ({ ...x, kb: kb.name })));
+    for (const kb of kbs) docs.push(...(kbDocsArr(kb) || []).map(x => ({ ...x, kb: kb.name, kbId: kb.id })));
     let chunks = kbs.reduce((a, k) => a + (kbChunkCount(k) || 0), 0);
     paint(orgs, org, kbs, bots, members, docs, chunks, false);
     // Phase 2 (background): enrich recent-docs for KBs whose list payload
@@ -60,8 +61,9 @@ async function main() {
         if (!d || typeof d !== 'object') continue;
         for (const key of ['documents', 'files', 'docs', 'uploads', 'items']) {
           if (Array.isArray(d[key])) {
-            const kbName = kbs.find(k => String(k.id) === String(d.id || d.kb_id))?.name || '';
-            extra.push(...d[key].map(x => ({ ...x, kb: kbName })));
+            const kbMeta = kbs.find(k => String(k.id) === String(d.id || d.kb_id));
+            const kbName = kbMeta?.name || '';
+            extra.push(...d[key].map(x => ({ ...x, kb: kbName, kbId: kbMeta?.id })));
             chunks += d[key].reduce((a, x) => a + (x.chunk_count ?? x.chunks_count ?? (typeof x.chunks === 'number' ? x.chunks : 0)), 0);
             break;
           }
@@ -91,7 +93,7 @@ async function main() {
     </div>
     <div class="grid grid-2 mt3">
       <div class="card"><div class="flex between"><h3>Recent documents</h3><a href="knowledge-bases.html" class="small">View all</a></div>
-        ${docs.slice(0, 5).map(d => { const st = String(d.status || d.ingestion_status || d.state || d.ingest_status || (d.ingested_at ? 'completed' : 'pending')); return `<div class="upload-row"><span>📄</span><span style="flex:1"><strong>${escapeHtml(d.filename || d.file_name || d.name)}</strong><br><span class="tiny muted">${escapeHtml(d.kb || '')} · ${timeAgo(d.created_at || d.uploaded_at)}</span></span><span class="badge b-${st}">${escapeHtml(st)}</span></div>`; }).join('') || '<p class="muted small mt2">No documents yet.</p>'}</div>
+        ${docs.slice(0, 5).map(d => { const st = String(d.status || d.ingestion_status || d.state || d.ingest_status || (d.ingested_at ? 'completed' : 'pending')); const info = docStatusInfo(st); const docPk = d.id || d.doc_id || d.pk || d.uuid; const reviewHref = info.key === 'review' && d.kbId && docPk ? `knowledge-base.html?id=${encodeURIComponent(d.kbId)}&tab=documents` : null; return `<div class="upload-row"><span>📄</span><span style="flex:1"><strong>${escapeHtml(d.filename || d.file_name || d.name)}</strong><br><span class="tiny muted">${escapeHtml(d.kb || '')} · ${timeAgo(d.created_at || d.uploaded_at)}</span></span>${reviewHref ? `<a class="btn btn-primary btn-sm" href="${reviewHref}">Review</a> ` : ''}<span class="badge ${info.badge}">${escapeHtml(info.label)}</span></div>`; }).join('') || '<p class="muted small mt2">No documents yet.</p>'}</div>
       <div class="card"><div class="flex between"><h3>Recent bots</h3><a href="bots.html" class="small">View all</a></div>
         ${bots.slice(0, 5).map(b => `<div class="upload-row"><span>🤖</span><span style="flex:1"><strong>${escapeHtml(b.name)}</strong><br><span class="tiny muted mono">${escapeHtml(b.slug || '')}</span></span><a class="btn btn-secondary btn-sm" href="bot.html?id=${b.id}">Open</a></div>`).join('') || '<p class="muted small mt2">No bots yet.</p>'}</div>
     </div>`;

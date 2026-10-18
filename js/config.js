@@ -38,7 +38,11 @@ export const ENDPOINTS = {
   webImportConfirm: (orgId, kbId, importId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/web-imports/${importId}/confirm/`, // POST {} -> confirmed snapshot metadata
   webImportIngest: (orgId, kbId, importId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/web-imports/${importId}/ingest/`, // POST {} -> queued ingestion summary
   documentDetail: (orgId, kbId, docId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/documents/${docId}/`, // GET status, DELETE single doc
-  documentRetry: (orgId, kbId, docId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/documents/${docId}/retry/`, // POST retry failed ingestion
+  documentRetry: (orgId, kbId, docId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/documents/${docId}/retry/`, // POST retry: extraction if unconfirmed, embedding if confirmed; 409 while ready_for_review
+  // Uploaded-document review (upload parks in ready_for_review, same as web-import drafts).
+  documentContent: (orgId, kbId, docId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/documents/${docId}/content/`, // GET {content, original_content, word_count, editable, error}; PATCH {content} only
+  documentConfirm: (orgId, kbId, docId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/documents/${docId}/confirm/`, // POST {} -> 200 {confirmed_at, word_count, already_confirmed} — freezes edits
+  documentIngest: (orgId, kbId, docId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/documents/${docId}/ingest/`, // POST {} -> 202 {status, chunk_count, already_processing}; 200 if already ready; 409 if not confirmed
   bots: (id) => `/api/chat/orgs/${id}/bots/`,
   botDetail: (orgId, botId) => `/api/chat/orgs/${orgId}/bots/${botId}/`,
   regenerateKey: (orgId, botId) => `/api/chat/orgs/${orgId}/bots/${botId}/keys/rotate/`, // POST: rotates key, raw key returned once
