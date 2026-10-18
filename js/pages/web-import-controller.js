@@ -520,8 +520,11 @@ function mdToHtml(text) {
 
     if (isBlank(line)) { i++; continue; }
 
-    // Paragraph: consecutive plain lines
-    const para = [];
+    // Paragraph: always consume at least the current line so the loop can never
+    // stall on a line that looks like a block (e.g. a stray "|") but was not
+    // handled above — otherwise the renderer spins forever and hangs the tab.
+    const para = [line];
+    i++;
     while (i < lines.length && !isBlank(lines[i]) && !startsBlock(lines[i])) {
       para.push(lines[i]);
       i++;

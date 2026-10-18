@@ -153,6 +153,13 @@ function renderIngestionPanel(info, counts) {
   return `<section class="wi-ingestion" aria-live="polite"><div class="wi-ingestion-head"><div><h3>Ingestion</h3><span class="badge ${info.badge}">${escapeHtml(info.label)}</span></div>${action}</div><div class="wi-ingestion-counts"><span><strong>${counts.approved}</strong> approved</span><span><strong>${counts.indexed}</strong> indexed</span><span><strong>${counts.processing}</strong> processing</span><span><strong>${counts.waiting}</strong> waiting</span><span><strong>${counts.failed}</strong> failed</span></div>${session.ingestion_started_at ? `<p class="tiny muted">Started ${escapeHtml(timeAgo(session.ingestion_started_at))}${session.ingestion_completed_at ? ` · finished ${escapeHtml(timeAgo(session.ingestion_completed_at))}` : ''}</p>` : ''}${outcome}${pollFatal && active ? `<div class="alert alert-warning mt1" role="alert">Status updates stopped after a connection problem. <button type="button" class="btn btn-ghost btn-sm" id="wi-refresh-ingestion" ${statusRefreshing ? 'disabled' : ''}>${statusRefreshing ? 'Refreshing…' : 'Refresh status'}</button></div>` : ''}<p class="tiny muted">Pages are processed independently; retrieval availability follows the backend indexing pipeline and may take time to update.</p></section>`;
 }
 
+function setHtmlPreservingScroll(el, html) {
+  if (!el) return;
+  const top = el.scrollTop;
+  el.innerHTML = html;
+  if (top) el.scrollTop = top;
+}
+
 function renderList() {
   const w = document.getElementById('wi-list');
   const count = document.getElementById('wi-count');
@@ -165,7 +172,7 @@ function renderList() {
     w.innerHTML = emptyState('🗂️', session.status === 'confirmed' ? 'No approved pages' : 'No pages yet', session.status === 'confirmed' ? 'This confirmed snapshot has no page details to display.' : 'Pages will appear here once the import starts.', '');
     return;
   }
-  w.innerHTML = shown.map((p) => {
+  setHtmlPreservingScroll(w, shown.map((p) => {
     const info = session.status === 'confirmed' ? ingestionPageStatusInfo(p.ingestion_status) : pageStatusInfo(p.status);
     const sel = String(p.id) === String(selectedId);
     const wc = info.key === 'completed' && p.word_count ? `<span class="tiny muted">${p.word_count.toLocaleString()} words</span>` : '';
@@ -182,9 +189,23 @@ function renderList() {
           ${wc}
         </span>
       </button>`;
-  }).join('');
+  }).join(''));
   w.querySelectorAll('.wi-row').forEach((b) => {
-    b.onclick = async () => { if (await canLeaveEditor()) { selectedId = b.dataset.pageId; if (editor.id !== selectedId) editor = { id: null, text: '', editing: false, saving: false, error: '', saved: false }; renderList(); renderContent(); } };
+    b.onclick = async () => {
+      const id = b.dataset.pageId;
+      if (String(id) === String(selectedId)) return;
+      if (!(await canLeaveEditor())) return;
+      selectedId = id;
+      if (editor.id !== selectedId) editor = { id: null, text: '', editing: false, saving: false, error: '', saved: false };
+      // Update the selected row in place — rebuilding the list resets its scroll.
+      w.querySelectorAll('.wi-row').forEach((row) => {
+        const on = row.dataset.pageId === id;
+        row.classList.toggle('selected', on);
+        row.setAttribute('aria-selected', String(on));
+        if (on) row.setAttribute('aria-current', 'true'); else row.removeAttribute('aria-current');
+      });
+      renderContent();
+    };
   });
 }
 
@@ -386,12 +407,17 @@ async function deleteDraft(p) {
 function renderPollWarn(count) {
   const w = document.getElementById('wi-poll-warn');
   if (!w) return;
+  if (pollFatal) {
+    w.innerHTML = `<div class="alert alert-warning mt1" role="alert"><span>⚠️</span><div class="tiny">Status updates stopped after a connection problem. <button type="button" class="btn btn-ghost btn-sm" id="wi-refresh-status" ${statusRefreshing ? 'disabled' : ''}>${statusRefreshing ? 'Refreshing…' : 'Refresh status'}</button></div></div>`;
+    w.querySelector('#wi-refresh-status')?.addEventListener('click', refreshImportStatus);
+    return;
+  }
   w.innerHTML = count
     ? `<div class="alert alert-warning mt1"><span>⚠️</span><div class="tiny">Temporary problem reaching the server — retrying… (attempt ${count})</div></div>`
     : '';
 }
 
-function render() { renderHeader(); renderList(); renderContent(); }
+function render() { renderHeader(); renderList(); renderContent(); renderPollWarn(0); }
 
 /* ==================== fatal / invalid session ==================== */
 function renderFatal(kind, err) {
@@ -420,14 +446,20 @@ function applyData(statusRes, pagesRes) {
 
 function onUpdate({ session: s, pages: p }) {
   if (!mounted) return;
-  session = session.status === 'confirmed'
-    ? { ...s, status: 'confirmed', confirmed_at: session.confirmed_at || s.confirmed_at, page_count: session.page_count || s.page_count, included_pages: session.included_pages || s.included_pages }
-    : s;
-  pages = mergePolledPages(p, pages, { editingId: editor.editing ? editor.id : null, editorText: editor.text });
-  selectedId = resolveSelectedId(visiblePages(), selectedId);
-  pollFatal = false;
-  renderPollWarn(0);
-  render();
+  // A UI exception here must never be mistaken for a failed poll (the poller
+  // counts thrown errors as network failures and would stop after 3 of them).
+  try {
+    session = session.status === 'confirmed'
+      ? { ...s, status: 'confirmed', confirmed_at: session.confirmed_at || s.confirmed_at, page_count: session.page_count || s.page_count, included_pages: session.included_pages || s.included_pages }
+      : s;
+    pages = mergePolledPages(p, pages, { editingId: editor.editing ? editor.id : null, editorText: editor.text });
+    selectedId = resolveSelectedId(visiblePages(), selectedId);
+    pollFatal = false;
+    renderPollWarn(0);
+    render();
+  } catch (err) {
+    console.error('[web-import] failed to render poll update', err);
+  }
   if (!shouldPollImport(session)) stopPolling();
 }
 
@@ -446,6 +478,7 @@ function startPolling({ immediate = false } = {}) {
         stopPolling();
         toast('Stopped updating — the server could not be reached.', 'error');
         render();
+        renderPollWarn(0);
       } else {
         renderPollWarn(info.failures);
       }

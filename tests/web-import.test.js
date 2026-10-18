@@ -485,6 +485,15 @@ test('renderMarkdown escapes raw HTML and refuses unsafe link schemes', () => {
   assert.ok(!/href="javascript:/i.test(html), 'javascript: links must not be rendered as anchors');
 });
 
+test('renderMarkdown always terminates on block-like lines that no handler consumes', () => {
+  // A lone "|" line looks like a table but isn't one; the renderer must still
+  // advance instead of spinning forever (which hung the review page).
+  assert.equal(renderMarkdown('| foo | bar |'), '<p>| foo | bar |</p>');
+  assert.equal(renderMarkdown('text\n| lone | pipe |\nmore'), '<p>text</p>\n<p>| lone | pipe |<br>more</p>');
+  // A malformed fence (info string with spaces) must not stall either.
+  assert.equal(renderMarkdown('```js extra\ntext'), '<p>```js extra<br>text</p>');
+});
+
 test('renderMarkdown applies an injected sanitizer as the final step', () => {
   const seen = [];
   renderMarkdown('# Hi', { sanitize: (h) => { seen.push(h); return `${h}<!--sanitized-->`; } });

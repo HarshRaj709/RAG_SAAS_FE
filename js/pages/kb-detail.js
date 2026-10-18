@@ -120,6 +120,7 @@ function renderDiscoverResults() {
   if (!w) return;
   const list = visiblePages();
   const allOn = list.length > 0 && list.every(p => picked.has(p.url));
+  const prevScroll = w.querySelector('.disc-list')?.scrollTop || 0;
   w.innerHTML = `
     <div class="disc-bar">
       <div class="disc-bar-info">
@@ -152,6 +153,8 @@ function renderDiscoverResults() {
         <button class="btn btn-primary btn-sm" id="disc-add" ${picked.size ? '' : 'disabled'}>Review ${picked.size || ''} page${picked.size === 1 ? '' : 's'}</button>
       </div>
     </div>`;
+  const freshList = w.querySelector('.disc-list');
+  if (freshList && prevScroll) freshList.scrollTop = prevScroll;
   const filter = w.querySelector('#disc-filter');
   filter.oninput = debounce((e) => { discQuery = e.target.value; const pos = e.target.selectionStart; renderDiscoverResults(); const nf = document.getElementById('disc-filter'); if (nf) { nf.focus(); nf.setSelectionRange(pos, pos); } }, 200);
   w.querySelector('#disc-toggle-all').onclick = () => {
@@ -161,10 +164,26 @@ function renderDiscoverResults() {
     renderDiscoverResults();
   };
   w.querySelector('#disc-rediscover').onclick = () => runDiscover();
-  w.querySelectorAll('.page-pick input').forEach(c => c.onchange = () => { c.checked ? picked.add(c.dataset.url) : picked.delete(c.dataset.url); renderDiscoverResults(); });
+  w.querySelectorAll('.page-pick input').forEach(c => c.onchange = () => {
+    c.checked ? picked.add(c.dataset.url) : picked.delete(c.dataset.url);
+    c.closest('.page-pick')?.classList.toggle('selected', c.checked);
+    // Update the summary in place — re-rendering the list resets its scroll.
+    updateDiscoverSummary(w);
+  });
   const add = w.querySelector('#disc-add');
   add.onclick = () => startWebImport(add);
   w.querySelectorAll('[data-close]').forEach(b => b.onclick = resetDiscoverPanel);
+}
+/** Refresh the discovered-pages selection summary without rebuilding the list. */
+function updateDiscoverSummary(w) {
+  const bar = w.querySelector('.disc-bar-info .tiny.muted');
+  if (bar) bar.textContent = `· ${picked.size} selected`;
+  const foot = w.querySelector('.disc-foot > .tiny.muted');
+  if (foot) foot.textContent = picked.size ? `${picked.size} page${picked.size === 1 ? '' : 's'} ready to scrape` : 'Select at least one page to continue';
+  const add = w.querySelector('#disc-add');
+  if (add) { add.disabled = !picked.size; add.textContent = `Review ${picked.size || ''} page${picked.size === 1 ? '' : 's'}`; }
+  const alwaysOn = w.querySelector('#disc-toggle-all');
+  if (alwaysOn) { const all = visiblePages(); alwaysOn.textContent = all.length > 0 && all.every(p => picked.has(p.url)) ? 'Clear all' : 'Select all'; }
 }
 /**
  * Step 2: submit the selected URLs, then hand off to the review screen. The
