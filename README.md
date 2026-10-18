@@ -74,9 +74,11 @@ The review screen supports editing saved Markdown, including or excluding a
 draft, and deleting a staged draft. **Confirm Import** posts to
 `POST /kbs/<kbId>/web-imports/<importId>/confirm/`; the backend records an
 immutable snapshot and returns `status`, `confirmed_at`, `page_count`, and
-`already_confirmed`. Confirmation ends this frontend workflow. It does not run
-ingestion, chunking, embeddings, or indexing. A confirmed session is restored
-as read-only when reopened.
+`already_confirmed`. Confirmation does not start ingestion. From the confirmed
+read-only screen, a separate action starts or retries processing through
+`POST /kbs/<kbId>/web-imports/<importId>/ingest/`. The review screen polls
+session detail for import and per-snapshot-page indexing status until completion
+or failure. A confirmed session is restored as read-only when reopened.
 
 The KB **Documents** tab also lists past webpage imports
 (`GET /kbs/<id>/web-imports/`), so an unconfirmed scrape can be reopened later
@@ -84,7 +86,8 @@ The KB **Documents** tab also lists past webpage imports
 Removing a session only drops its unconfirmed drafts; documents already in the KB
 are untouched.
 
-Out of scope for this screen: chunking, embeddings, and vector indexing.
+Out of scope for this screen: implementing the backend RAG pipeline, chunking,
+embedding, or vector-store behavior.
 
 ## Known backend gaps
 

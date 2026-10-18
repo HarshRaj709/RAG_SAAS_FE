@@ -1,6 +1,6 @@
 /** Central API configuration. Edit ONLY here when backend paths differ. */
 try { localStorage.removeItem('rag_api_base'); } catch { /* ignore — stale override from removed Settings UI */ }
-export const API_BASE_URL = (localStorage.getItem('rag_api_base') || 'https://rag-chat-bot-5yva.onrender.com/').trim().replace(/\/+$/, '');
+export const API_BASE_URL = (localStorage.getItem('rag_api_base') || 'http://localhost:8000/').trim().replace(/\/+$/, '');
 export const USE_MOCK = false; // set true to demo UI offline with fake data
 /** Google OAuth client ID. Paste your Web client ID here, or set localStorage 'rag_google_cid'. Empty = Google buttons hidden. */
 export const GOOGLE_CLIENT_ID = (localStorage.getItem('rag_google_cid') || '1098189772889-3mpemau29ut364viqh3nd86oqkt6c0sk.apps.googleusercontent.com').trim();
@@ -36,6 +36,7 @@ export const ENDPOINTS = {
   webImportPages: (orgId, importId) => `/api/knowledge_base/orgs/${orgId}/web-imports/${importId}/pages/`, // GET persisted drafts
   webImportPage: (orgId, importId, pageId) => `/api/knowledge_base/orgs/${orgId}/web-imports/${importId}/pages/${pageId}/`, // PATCH editable fields; DELETE draft
   webImportConfirm: (orgId, kbId, importId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/web-imports/${importId}/confirm/`, // POST {} -> confirmed snapshot metadata
+  webImportIngest: (orgId, kbId, importId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/web-imports/${importId}/ingest/`, // POST {} -> queued ingestion summary
   documentDetail: (orgId, kbId, docId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/documents/${docId}/`, // GET status, DELETE single doc
   documentRetry: (orgId, kbId, docId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/documents/${docId}/retry/`, // POST retry failed ingestion
   bots: (id) => `/api/chat/orgs/${id}/bots/`,

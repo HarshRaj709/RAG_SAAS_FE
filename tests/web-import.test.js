@@ -19,6 +19,13 @@ import {
   mergePolledPages,
   confirmationSummary,
   requestWebImportConfirmation,
+  ingestionStatusInfo,
+  ingestionPageStatusInfo,
+  ingestionCounts,
+  approvedPagesForDisplay,
+  requestWebImportIngestion,
+  shouldPollImport,
+  isIngestionTerminal,
   classifySessionError,
   webImportUrl,
   startWebImport,
@@ -285,9 +292,106 @@ test('confirmation dialog offers cancel and describes snapshot-only approval', (
   assert.match(page, /records an approved snapshot/);
   assert.match(page, /later processing step/);
   assert.match(page, /if \(confirming\) return/);
-  assert.match(page, /readOnly \|\| inclusionBusy/);
-  assert.match(page, /readOnly \|\| deleteBusy/);
+  assert.match(page, /const readOnly = session.status === 'confirmed'/);
+  assert.match(page, /Approved snapshot · read-only/);
+  assert.match(page, /const controls = readOnly/);
   assert.match(page, /status: 'confirmed'/);
+});
+
+test('ingestion status labels match the Part 5A session and snapshot statuses', () => {
+  assert.equal(ingestionStatusInfo('not_started').label, 'Confirmed, awaiting ingestion');
+  assert.equal(ingestionStatusInfo('queued').label, 'Queued');
+  assert.equal(ingestionStatusInfo('processing').label, 'Processing');
+  assert.equal(ingestionStatusInfo('partially_failed').label, 'Completed with failures');
+  assert.equal(ingestionStatusInfo('failed').label, 'Failed');
+  assert.equal(ingestionStatusInfo('completed').label, 'Completed');
+  assert.equal(ingestionPageStatusInfo('pending').label, 'Waiting');
+  assert.equal(ingestionPageStatusInfo('ready').label, 'Indexed');
+  assert.equal(ingestionPageStatusInfo('failed').label, 'Failed');
+});
+
+test('ingestion can start only for a confirmed import and polls only while active', () => {
+  assert.equal(shouldPollImport({ status: 'confirmed', ingestion_status: 'queued' }), true);
+  assert.equal(shouldPollImport({ status: 'confirmed', ingestion_status: 'processing' }), true);
+  assert.equal(shouldPollImport({ status: 'confirmed', ingestion_status: 'not_started' }), false);
+  assert.equal(shouldPollImport({ status: 'confirmed', ingestion_status: 'completed' }), false);
+  assert.equal(shouldPollImport({ status: 'ready_for_review' }), false);
+  assert.equal(isIngestionTerminal('completed'), true);
+  assert.equal(isIngestionTerminal('partially_failed'), true);
+  assert.equal(isIngestionTerminal('failed'), true);
+  assert.equal(isIngestionTerminal('queued'), false);
+});
+
+test('approved page display uses immutable snapshot page statuses and only approved drafts', () => {
+  const displayed = approvedPagesForDisplay([
+    { id: 'd1', content: 'approved body', is_included: true },
+    { id: 'd2', content: 'excluded body', is_included: false },
+  ], [{ id: 's1', source_draft_id: 'd1', ingestion_status: 'ready', url: 'https://a.test' }]);
+  assert.equal(displayed.length, 1);
+  assert.equal(displayed[0].id, 'd1');
+  assert.equal(displayed[0].snapshot_id, 's1');
+  assert.equal(displayed[0].content, 'approved body');
+  assert.equal(displayed[0].ingestion_status, 'ready');
+});
+
+test('ingestion summary counts approved, indexed, failed, processing and waiting pages', () => {
+  assert.deepEqual(ingestionCounts({
+    approved_page_count: 3, indexed_pages: 1, ingestion_failed_pages: 1,
+    ingestion_pages: [{ ingestion_status: 'processing' }, { ingestion_status: 'pending' }, { ingestion_status: 'ready' }],
+  }), { approved: 3, indexed: 1, processing: 1, waiting: 1, failed: 1 });
+});
+
+test('ingestion API helper posts an empty body and uses returned backend status/counts', async () => {
+  let call;
+  const result = await requestWebImportIngestion(async (...args) => {
+    call = args;
+    return { import_id: 'imp-1', status: 'confirmed', ingestion_status: 'queued', approved_page_count: 3, indexed_pages: 0, failed_pages: 0, already_processing: false };
+  }, '/ingest/');
+  assert.deepEqual(call, ['/ingest/', { method: 'POST', body: {} }]);
+  assert.deepEqual(result, { import_id: 'imp-1', status: 'confirmed', ingestion_status: 'queued', approved_page_count: 3, indexed_pages: 0, ingestion_failed_pages: 0, already_processing: false });
+  await assert.rejects(
+    () => requestWebImportIngestion(async () => { throw { status: 0, message: 'network unavailable' }; }, '/ingest/'),
+    (err) => err.status === 0 && err.message === 'network unavailable',
+  );
+  await assert.rejects(
+    () => requestWebImportIngestion(async () => ({ status: 'confirmed' }), '/ingest/'),
+    (err) => /unrecognized ingestion status/i.test(err.message),
+  );
+});
+
+test('session normalization restores Part 5A import and snapshot status contract', () => {
+  const session = normalizeSession({
+    status: 'confirmed', ingestion_status: 'processing', approved_page_count: 2,
+    indexed_pages: 1, ingestion_failed_pages: 0,
+    ingestion_started_at: '2026-10-16T12:00:00Z',
+    ingestion_pages: [{ id: 's1', source_draft_id: 'd1', ingestion_status: 'ready', document_id: 'doc1' }],
+  });
+  assert.equal(session.ingestion_status, 'processing');
+  assert.equal(session.approved_page_count, 2);
+  assert.equal(session.indexed_pages, 1);
+  assert.equal(session.ingestion_pages[0].source_draft_id, 'd1');
+  assert.equal(session.ingestion_pages[0].document_id, 'doc1');
+});
+
+test('polling continues for confirmed queued imports and stops at ingestion terminal status', async () => {
+  const timer = fakeTimer();
+  const updates = [];
+  const statuses = ['queued', 'processing', 'completed'];
+  const poller = createImportPoller({
+    fetchStatus: async () => ({ status: 'confirmed', ingestion_status: statuses.shift(), approved_page_count: 1 }),
+    fetchPages: async () => ({ pages: [{ id: 'd1', status: 'completed', is_included: true }] }),
+    onUpdate: value => updates.push(value),
+    interval: 1000,
+    timer,
+  });
+  poller.start({ immediate: true });
+  await flush();
+  assert.equal(poller.state.stopped, false);
+  await timer.runNext();
+  assert.equal(poller.state.stopped, false);
+  await timer.runNext();
+  assert.equal(poller.state.stopped, true);
+  assert.equal(updates.length, 3);
 });
 
 test('classifySessionError distinguishes 404/403/401/network', () => {
@@ -493,9 +597,12 @@ test('the review page never scrapes client-side or calls Jina', () => {
   assert.ok(!/fetch\s*\(\s*['"`]https?:/.test(page), 'must not fetch arbitrary external URLs');
 });
 
-test('the review page never triggers ingestion, embeddings or vector indexing', () => {
+test('the review page only uses the explicit import-ingestion endpoint and never calls embeddings directly', () => {
   const page = src('../js/pages/web-import.js').toLowerCase();
-  for (const bad of ['/ingest', 'ingest(', 'embedding', 'embed(', 'vector', 'qdrant', 'documentretry']) {
+  for (const bad of ['embedding', 'embed(', 'qdrant', 'documentretry']) {
     assert.ok(!page.includes(bad), `must not reference ${bad}`);
   }
+  assert.match(page, /endpoints\.webimportingest/);
+  assert.match(page, /if \(ingestionstarting\) \{ close\(\); return; \}/);
+  assert.match(page, /session\.status === 'confirmed'/);
 });

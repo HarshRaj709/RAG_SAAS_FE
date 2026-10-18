@@ -52,6 +52,36 @@ export function sessionStatusInfo(raw) {
   return { key: 'unknown', label: raw ? String(raw) : 'Unknown', badge: 'b-pending' };
 }
 
+const INGESTION_ACTIVE = ['queued', 'processing'];
+const INGESTION_TERMINAL = ['partially_failed', 'failed', 'completed'];
+
+export function ingestionStatusInfo(raw) {
+  const v = String(raw ?? '').toLowerCase();
+  if (v === 'not_started') return { key: v, label: 'Confirmed, awaiting ingestion', badge: 'b-pending' };
+  if (v === 'queued') return { key: v, label: 'Queued', badge: 'b-pending' };
+  if (v === 'processing') return { key: v, label: 'Processing', badge: 'b-processing' };
+  if (v === 'completed') return { key: v, label: 'Completed', badge: 'b-completed' };
+  if (v === 'partially_failed') return { key: v, label: 'Completed with failures', badge: 'b-warning' };
+  if (v === 'failed') return { key: v, label: 'Failed', badge: 'b-failed' };
+  return { key: 'unknown', label: raw ? String(raw) : 'Status unavailable', badge: 'b-pending' };
+}
+
+export function isIngestionActive(raw) { return INGESTION_ACTIVE.includes(String(raw ?? '').toLowerCase()); }
+export function isIngestionTerminal(raw) { return INGESTION_TERMINAL.includes(String(raw ?? '').toLowerCase()); }
+export function shouldPollImport(session = {}) {
+  if (String(session.status || '').toLowerCase() === 'confirmed') return isIngestionActive(session.ingestion_status);
+  return !isSessionTerminal(session.status);
+}
+
+export function ingestionPageStatusInfo(raw) {
+  const v = String(raw ?? '').toLowerCase();
+  if (v === 'pending') return { key: v, label: 'Waiting', badge: 'b-pending' };
+  if (v === 'processing') return { key: v, label: 'Processing', badge: 'b-processing' };
+  if (v === 'ready') return { key: v, label: 'Indexed', badge: 'b-completed' };
+  if (v === 'failed') return { key: v, label: 'Failed', badge: 'b-failed' };
+  return { key: 'unknown', label: raw ? String(raw) : 'Status unavailable', badge: 'b-pending' };
+}
+
 /**
  * Reconcile the aggregate counts from the status endpoint with the fetched
  * page list. The page list wins for states when available, because it is the
@@ -110,8 +140,83 @@ export function normalizeSession(res) {
     confirmed_at: r.confirmed_at || null,
     page_count: Number(r.page_count) || 0,
     already_confirmed: Boolean(r.already_confirmed),
+    ingestion_status: r.ingestion_status || 'not_started',
+    approved_page_count: Number(r.approved_page_count ?? r.confirmed_page_count ?? r.page_count) || 0,
+    indexed_pages: Number(r.indexed_pages) || 0,
+    ingestion_failed_pages: Number(r.ingestion_failed_pages ?? r.failed_pages) || 0,
+    ingestion_started_at: r.ingestion_started_at || null,
+    ingestion_completed_at: r.ingestion_completed_at || null,
+    ingestion_pages: Array.isArray(r.ingestion_pages) ? r.ingestion_pages.map(normalizeIngestionPage) : null,
     created_at: r.created_at || null,
     updated_at: r.updated_at || null,
+  };
+}
+
+export function normalizeIngestionPage(p) {
+  const r = p && typeof p === 'object' ? p : {};
+  return {
+    id: r.id || null,
+    source_draft_id: r.source_draft_id || null,
+    url: r.url || '',
+    final_url: r.final_url || '',
+    title: r.title || '',
+    ingestion_status: r.ingestion_status || 'pending',
+    ingestion_error: typeof r.ingestion_error === 'string' ? r.ingestion_error : '',
+    ingestion_started_at: r.ingestion_started_at || null,
+    ingested_at: r.ingested_at || null,
+    document_id: r.document_id || null,
+  };
+}
+
+export function approvedPagesForDisplay(drafts = [], snapshotPages = null) {
+  const source = Array.isArray(drafts) ? drafts : [];
+  if (!Array.isArray(snapshotPages)) return source.filter(p => p.is_included);
+  const byDraftId = new Map(source.map(p => [String(p.id), p]));
+  return snapshotPages.map((snapshot) => {
+    const draft = byDraftId.get(String(snapshot.source_draft_id));
+    return {
+      ...(draft || {}),
+      id: draft?.id || snapshot.source_draft_id || snapshot.id,
+      snapshot_id: snapshot.id,
+      source_draft_id: snapshot.source_draft_id,
+      url: snapshot.url || draft?.url || '',
+      final_url: snapshot.final_url || draft?.final_url || '',
+      title: snapshot.title || draft?.title || '',
+      is_included: true,
+      ingestion_status: snapshot.ingestion_status,
+      ingestion_error: snapshot.ingestion_error,
+      ingestion_started_at: snapshot.ingestion_started_at,
+      ingested_at: snapshot.ingested_at,
+      document_id: snapshot.document_id,
+    };
+  });
+}
+
+export function ingestionCounts(session = {}) {
+  const pages = Array.isArray(session.ingestion_pages) ? session.ingestion_pages : [];
+  const approved = Number(session.approved_page_count ?? session.confirmed_page_count) || pages.length || 0;
+  const indexed = Number(session.indexed_pages) || 0;
+  const failed = Number(session.ingestion_failed_pages) || 0;
+  const processing = pages.filter(p => p.ingestion_status === 'processing').length;
+  const waiting = pages.filter(p => p.ingestion_status === 'pending').length;
+  return { approved, indexed, processing, waiting, failed };
+}
+
+/** Queue or requeue the backend's existing snapshot ingestion workflow. */
+export async function requestWebImportIngestion(request, endpoint) {
+  const response = await request(endpoint, { method: 'POST', body: {} });
+  const validStatuses = ['not_started', 'queued', 'processing', 'partially_failed', 'failed', 'completed'];
+  if (!response || !validStatuses.includes(String(response.ingestion_status || ''))) {
+    throw { status: 0, message: 'The server returned an unrecognized ingestion status.' };
+  }
+  return {
+    import_id: response.import_id || null,
+    status: response.status || null,
+    ingestion_status: response.ingestion_status,
+    approved_page_count: Number(response.approved_page_count) || 0,
+    indexed_pages: Number(response.indexed_pages) || 0,
+    ingestion_failed_pages: Number(response.failed_pages) || 0,
+    already_processing: Boolean(response.already_processing),
   };
 }
 
@@ -411,7 +516,7 @@ function mdToHtml(text) {
 /* ==================== polling ==================== */
 
 /**
- * Poll an import session until it reaches a terminal state.
+ * Poll an import session while scraping or confirmed-snapshot ingestion is active.
  *
  * All timing + IO is injected so it is deterministic in tests and uses the
  * project's existing setTimeout/clearTimeout in the browser.
@@ -461,8 +566,8 @@ export function createImportPoller({
       const session = normalizeSession(statusRes);
       const pages = normalizePages(pagesRes);
       onUpdate({ session, pages });
-      const sessionDone = isSessionTerminal(session.status);
-      const pagesDone = pages.length > 0 && pages.every(p => isPageTerminal(p.status));
+      const sessionDone = !shouldPollImport(session);
+      const pagesDone = session.status !== 'confirmed' && pages.length > 0 && pages.every(p => isPageTerminal(p.status));
       if (sessionDone || pagesDone) { terminal = true; stopInternal(); return; }
     } catch (err) {
       busy = false;
