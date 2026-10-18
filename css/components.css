@@ -33,6 +33,10 @@ input[type="checkbox"]{accent-color:var(--primary)}
 .stat-card .stat-icon{width:44px;height:44px;border-radius:12px;display:grid;place-items:center;background:linear-gradient(135deg,rgba(99,102,241,.15),rgba(139,92,246,.15));color:var(--primary);flex-shrink:0}
 .stat-card .stat-num{font-size:26px;font-weight:800} .stat-card .stat-label{font-size:13px;color:var(--muted)}
 .badge{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600;padding:3px 10px;border-radius:99px;border:1px solid transparent}
+button.badge{cursor:pointer;font-family:inherit}
+.badge-link{transition:filter var(--trans),transform var(--trans)}
+.badge-link:hover{filter:brightness(.96);transform:translateY(-1px)}
+.badge-link:focus-visible{outline:none;box-shadow:var(--focus)}
 .b-owner{background:#ede9fe;color:#6d28d9} .b-admin{background:#dbeafe;color:#1d4ed8} .b-member{background:var(--surface-2);color:var(--muted)}
 .b-completed,.b-active,.b-success{background:var(--success-bg);color:var(--success)}
 .b-pending,.b-warning{background:var(--warning-bg);color:var(--warning)}

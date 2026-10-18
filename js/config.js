@@ -29,9 +29,21 @@ export const ENDPOINTS = {
   kbs: (id) => `/api/knowledge_base/orgs/${id}/kbs/`, // GET list, POST create {name, description}
   kbDetail: (orgId, kbId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/`, // GET detail, PATCH {name, description}, DELETE
   ingest: (orgId, kbId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/ingest/`, // POST multipart {file}
-  discover: (orgId, kbId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/discover/`, // POST {root_url} -> discovered page list (select-then-scrape is coming next)
+  discover: (orgId, kbId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/discover/`, // POST {root_url} -> discovered page list
+  // Web import (scrape -> review).
+  webImports: (orgId, kbId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/web-imports/`, // GET -> past sessions (paginated); POST {urls} -> 202 {import_id, pages}
+  webImportDetail: (orgId, importId) => `/api/knowledge_base/orgs/${orgId}/web-imports/${importId}/`, // GET session status + counts; DELETE discards unconfirmed drafts
+  webImportPages: (orgId, importId) => `/api/knowledge_base/orgs/${orgId}/web-imports/${importId}/pages/`, // GET the session's documents (url = source_url, status, content, word_count, confirmed_at, error)
+  // NOTE: PATCH/DELETE .../web-imports/{id}/pages/{page_id}/ was removed by the
+  // backend. Edit content via documents/{doc}/content/ and delete via documents/{doc}/.
+  webImportConfirm: (orgId, kbId, importId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/web-imports/${importId}/confirm/`, // POST {} -> confirms all ready_for_review docs; 409 while scrapes are in flight
+  webImportIngest: (orgId, kbId, importId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/web-imports/${importId}/ingest/`, // POST {} -> queued ingestion summary
   documentDetail: (orgId, kbId, docId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/documents/${docId}/`, // GET status, DELETE single doc
-  documentRetry: (orgId, kbId, docId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/documents/${docId}/retry/`, // POST retry failed ingestion
+  documentRetry: (orgId, kbId, docId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/documents/${docId}/retry/`, // POST retry: extraction if unconfirmed, embedding if confirmed; 409 while ready_for_review
+  // Uploaded-document review (upload parks in ready_for_review, same as web-import drafts).
+  documentContent: (orgId, kbId, docId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/documents/${docId}/content/`, // GET {content, original_content, word_count, editable, error}; PATCH {content} only
+  documentConfirm: (orgId, kbId, docId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/documents/${docId}/confirm/`, // POST {} -> 200 {confirmed_at, word_count, already_confirmed} — freezes edits
+  documentIngest: (orgId, kbId, docId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/documents/${docId}/ingest/`, // POST {} -> 202 {status, chunk_count, already_processing}; 200 if already ready; 409 if not confirmed
   bots: (id) => `/api/chat/orgs/${id}/bots/`,
   botDetail: (orgId, botId) => `/api/chat/orgs/${orgId}/bots/${botId}/`,
   regenerateKey: (orgId, botId) => `/api/chat/orgs/${orgId}/bots/${botId}/keys/rotate/`, // POST: rotates key, raw key returned once
@@ -43,3 +55,11 @@ export const ENDPOINTS = {
 export const BOT_DOMAINS_FIELD = 'allowed_domains';
 export const FINAL_DOC_STATUSES = ['completed', 'complete', 'done', 'ready', 'indexed', 'processed', 'success', 'succeeded', 'failed', 'error', 'errored'];
 export const MAX_DOC_POLLS = 30; // ~2 min at POLL_MS; then polling stops with a manual Refresh
+
+/* ---- Web import (scrape -> review) statuses ---- */
+// A page draft is done once it is completed or failed.
+export const FINAL_PAGE_STATUSES = ['completed', 'complete', 'done', 'ready', 'success', 'succeeded', 'failed', 'error', 'errored'];
+// The import session is terminal once every page has finished (all-ok, partial, or all-failed).
+export const TERMINAL_SESSION_STATUSES = ['ready_for_review', 'partially_failed', 'failed'];
+export const WEB_IMPORT_POLL_MS = 3000;
+export const WEB_IMPORT_MAX_FAILURES = 3; // consecutive poll failures before giving up

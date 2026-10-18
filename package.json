@@ -1,0 +1,10 @@
+{
+  "name": "rag-saas-fe",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "RAG SaaS frontend — plain HTML + vanilla JS ES modules. No build step.",
+  "scripts": {
+    "test": "node --test tests/"
+  }
+}

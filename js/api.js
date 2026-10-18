@@ -80,12 +80,36 @@ export function parseError(status, payload) {
 
 let mockSeed = 3;
 function mockResponse(method, path, body) {
+  if (path.includes('/web-imports/') && path.endsWith('/pages/')) {
+    return { import_id: 'imp1', pages: [
+      { id: 'p1', url: 'https://example.com/docs/getting-started', final_url: 'https://example.com/docs/getting-started', title: 'Getting started', status: 'completed', content: '# Getting started\n\nWelcome to the **docs**.\n\n- Install\n- Configure\n\nSee [pricing](https://example.com/pricing) for details.\n\n| Plan | Price |\n| --- | --- |\n| Free | $0 |', content_format: 'markdown', word_count: 24, error: '', scraped_at: new Date().toISOString() },
+      { id: 'p2', url: 'https://example.com/pricing', title: 'Pricing', status: 'failed', content: '', content_format: 'markdown', word_count: 0, error: 'The page could not be fetched (HTTP 404).', scraped_at: null },
+    ] };
+  }
+  if (path.includes('/web-imports/') && method === 'POST' && path.endsWith('/web-imports/')) {
+    const urls = Array.isArray(body?.urls) ? body.urls : [];
+    return { import_id: 'imp1', status: 'processing', total_pages: urls.length, completed_pages: 0, failed_pages: 0, pages: urls.map((u, i) => ({ id: 'p' + i, url: u, status: 'pending' })) };
+  }
+  if (path.endsWith('/web-imports/') && method === 'GET') {
+    return { count: 1, next: null, previous: null, results: [
+      { import_id: 'imp1', status: 'ready_for_review', total_pages: 2, pending_pages: 0, processing_pages: 0, completed_pages: 1, failed_pages: 1, created_at: new Date(Date.now() - 3600000).toISOString(), updated_at: new Date().toISOString() },
+    ] };
+  }
+  if (path.includes('/web-imports/')) {
+    return { import_id: 'imp1', status: 'ready_for_review', total_pages: 2, pending_pages: 0, processing_pages: 0, completed_pages: 1, failed_pages: 1, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+  }
   if (path.includes('/discover/')) {
     const root = String(body?.root_url || '').replace(/\/+$/, '');
     const pages = ['/docs', '/docs/quickstart', '/docs/api', '/docs/api/auth', '/docs/webhooks', '/pricing', '/blog/launch', '/about'];
     return { count: pages.length, root_url: root, pages: pages.map((p, i) => ({ url: root + p, title: p.split('/').pop().replace(/-/g, ' '), depth: p.split('/').length - 2 })) };
   }
-  if (path.includes('/kbs/') && (path.includes('/documents') || path.includes('/ingest'))) return body instanceof FormData ? { id: 'd' + (mockSeed++), filename: 'upload.pdf', status: 'pending', chunk_count: 0, created_at: new Date().toISOString() } : [];
+  if (path.includes('/documents/') && path.endsWith('/content/')) {
+    if (method === 'PATCH') return { content: body?.content ?? '', word_count: String(body?.content || '').split(/\s+/).filter(Boolean).length, editable: true };
+    return { content: '# Mock document\n\nThis is the **extracted** content of the uploaded file.\n\n- Edit me before confirming\n- Confirmation freezes the content', original_content: '# Mock document\n\nThis is the **extracted** content of the uploaded file.\n\n- Edit me before confirming\n- Confirmation freezes the content', word_count: 28, editable: true, error: '' };
+  }
+  if (path.includes('/documents/') && path.endsWith('/confirm/')) return { confirmed_at: new Date().toISOString(), word_count: 28, already_confirmed: false };
+  if (path.includes('/documents/') && path.endsWith('/ingest/')) return { status: 'processing', chunk_count: 3, already_processing: false };
+  if (path.includes('/kbs/') && (path.includes('/documents') || path.includes('/ingest'))) return body instanceof FormData ? { id: 'd' + (mockSeed++), filename: 'upload.pdf', status: 'pending', chunk_count: 0, word_count: 0, confirmed_at: null, created_at: new Date().toISOString() } : [];
   if (path.endsWith('/kbs/')) return method === 'POST' ? { id: 'kb1', ...body, document_count: 0, total_chunks: 0, created_at: new Date().toISOString() } : [{ id: 'kb1', name: 'Help Center', description: 'Support docs', document_count: 4, total_chunks: 128, created_at: new Date().toISOString() }];
   if (path.endsWith('/bots/')) return method === 'POST' ? { id: 'b1', slug: 'acme-support', api_key: 'rag_demo_key_123456', ...body } : [{ id: 'b1', name: 'Support Bot', slug: 'acme-support', knowledge_bases: ['kb1'], created_at: new Date().toISOString() }];
   if (path.includes('/chat/')) return { answer: 'This is a **mock answer** grounded in your docs. (Enable backend for real RAG.)', sources: [{ filename: 'help.md', score: 0.91 }] };

@@ -20,7 +20,7 @@ export async function mountShell(active) {
   holder.innerHTML = `
     <aside class="sidebar" id="sidebar" aria-label="Primary">
       <div class="brand"><img src="assets/logo.svg" alt="" width="28" height="28"><span>RAG SaaS</span></div>
-      <nav>${NAV.map(([h, l, p]) => `<a class="nav-link ${page === h || (h === 'knowledge-bases.html' && page === 'knowledge-base.html') || (h === 'bots.html' && page === 'bot.html') ? 'active' : ''}" href="${h}">${icon(p)}${l}</a>`).join('')}
+      <nav>${NAV.map(([h, l, p]) => `<a class="nav-link ${page === h || (h === 'knowledge-bases.html' && (page === 'knowledge-base.html' || page === 'web-import.html')) || (h === 'bots.html' && page === 'bot.html') ? 'active' : ''}" href="${h}">${icon(p)}${l}</a>`).join('')}
         <a class="nav-link" href="https://documenter.getpostman.com/view/41362344/2sBXqKofTd" target="_blank" rel="noopener">📄 API Docs</a></nav>
       <div class="user-card"><div class="avatar">${initials(user.name || user.email)}</div>
         <div style="min-width:0;flex:1"><div style="font-weight:700;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${user.name || user.email}</div>

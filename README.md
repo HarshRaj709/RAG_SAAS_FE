@@ -12,6 +12,17 @@ python -m http.server 5500
 
 Or use VS Code Live Server.
 
+## Test
+
+```bash
+npm test   # Node's built-in test runner (node:test) — no dependencies
+```
+
+Tests cover the web-import review flow (start import, routing by import id, status
+mapping/progress, markdown rendering, polling lifecycle + failures, list
+normalization, and scope guards). They mock the API and never hit real webpages
+or Jina.
+
 ## Change API base URL
 
 Edit `js/config.js` → `API_BASE_URL`. Single source of truth — no runtime override.
@@ -43,7 +54,40 @@ CORS_ALLOWED_ORIGINS = ["http://127.0.0.1:5500", "http://localhost:5500"]
 
 ## Features
 
-Signup/login/JWT + silent refresh, org switcher, dashboard stats + checklist, KB CRUD + drag-drop upload with progress + status polling, KB data sources (file upload / website URL discovery → `POST /kbs/<id>/discover/` with `root_url`, selectable page list; scraping the selection is next), bot wizard + one-time key modal + integration snippets + playground (session UUID, markdown, sources), members/invites with role matrix, settings, light/dark theme, toasts/skeletons/empty/error states, responsive + a11y (focus trap, Esc, `/` search, reduced-motion).
+Signup/login/JWT + silent refresh, org switcher, dashboard stats + checklist, KB CRUD + drag-drop upload with progress + status polling, KB data sources (file upload / website URL discovery → `POST /kbs/<id>/discover/` with `root_url`, selectable page list; **selected pages → scrape → review**), bot wizard + one-time key modal + integration snippets + playground (session UUID, markdown, sources), members/invites with role matrix, settings, light/dark theme, toasts/skeletons/empty/error states, responsive + a11y (focus trap, Esc, `/` search, reduced-motion).
+
+### Webpage scrape → review
+
+From a KB's **Add data → From website**, discover pages, pick the ones you want,
+then **Review selected pages**. That `POST /kbs/<id>/web-imports/` with
+`{urls}` and routes to `web-import.html?kb=<kbId>&import=<importId>`.
+
+`js/pages/web-import.js` is the review screen: it polls
+`GET /web-imports/<id>/` and `GET /web-imports/<id>/pages/` (persisted drafts —
+never re-scrapes), shows per-page status/word-count, renders Markdown (escaped
+then DOMPurify-sanitized), and stops polling on terminal states or unmount. The
+import id lives in the route, so refreshing restores the session. Pure logic
+(normalizers, status/progress mapping, markdown, poller) is in
+`js/pages/web-import-controller.js` and unit-tested.
+
+The review screen supports editing saved Markdown, including or excluding a
+draft, and deleting a staged draft. **Confirm Import** posts to
+`POST /kbs/<kbId>/web-imports/<importId>/confirm/`; the backend records an
+immutable snapshot and returns `status`, `confirmed_at`, `page_count`, and
+`already_confirmed`. Confirmation does not start ingestion. From the confirmed
+read-only screen, a separate action starts or retries processing through
+`POST /kbs/<kbId>/web-imports/<importId>/ingest/`. The review screen polls
+session detail for import and per-snapshot-page indexing status until completion
+or failure. A confirmed session is restored as read-only when reopened.
+
+The KB **Documents** tab also lists past webpage imports
+(`GET /kbs/<id>/web-imports/`), so an unconfirmed scrape can be reopened later
+(**Review**) or discarded (**Remove** → `DELETE /web-imports/<id>/`, owner/admin).
+Removing a session only drops its unconfirmed drafts; documents already in the KB
+are untouched.
+
+Out of scope for this screen: implementing the backend RAG pipeline, chunking,
+embedding, or vector-store behavior.
 
 ## Known backend gaps
 

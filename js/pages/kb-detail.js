@@ -2,9 +2,11 @@ import { initTheme, store } from '../state.js';
 import { guard } from '../router-guard.js';
 import { getOrgContext, currentRole } from '../components/org-switcher.js';
 import { apiFetch, asList, uploadWithProgress } from '../api.js';
-import { ENDPOINTS, ACCEPTED_EXTS, MAX_FILE_MB, POLL_MS, FINAL_DOC_STATUSES } from '../config.js';
+import { ENDPOINTS, ACCEPTED_EXTS, MAX_FILE_MB, POLL_MS } from '../config.js';
 import { toast, confirmDialog, skeletonList, emptyState, openModal } from '../ui.js';
 import { escapeHtml, timeAgo, formatBytes, qp, debounce } from '../utils.js';
+import { startWebImport as startWebImportRequest, webImportUrl, normalizeImportList, isSessionTerminal, sessionProgress, progressText, sessionStatusInfo } from './web-import-controller.js';
+import { docStatusInfo, isDocPollTerminal, requestDocContent, saveDocContent, confirmAndStartEmbedding } from './doc-review-controller.js';
 initTheme();
 await guard('knowledge-bases.html');
 const { orgId, org } = await getOrgContext();
@@ -30,15 +32,12 @@ const docStatus = (d) => String(
 const docChunks = (d) => (d.chunk_count ?? d.chunks_count ?? d.chunks ?? null);
 const docError = (d) => d.error_message || d.error || d.last_error || '';
 const docIngestedAt = (d) => d.ingested_at || d.ingestedAt || null;
+const docWords = (d) => (Number(d.word_count) || null);
+const docConfirmedAt = (d) => d.confirmed_at || null;
 /** Clear frontend status mapping. */
 function statusLabel(d) {
   if (retrying.has(String(docId(d)))) return 'Retrying…';
-  const v = docStatus(d).toLowerCase();
-  if (['pending', 'queued', 'waiting'].includes(v)) return 'Queued';
-  if (['processing', 'ingesting', 'running', 'in_progress'].includes(v)) return 'Processing';
-  if (['completed', 'complete', 'done', 'ready', 'indexed', 'processed', 'success', 'succeeded'].includes(v)) return 'Completed';
-  if (['failed', 'error', 'errored'].includes(v)) return 'Failed';
-  return docStatus(d);
+  return docStatusInfo(docStatus(d)).label;
 }
 /** Documents come embedded in the KB detail (no separate list endpoint). */
 function kbDocs(detail) {
@@ -49,9 +48,9 @@ function kbDocs(detail) {
   return [];
 }
 /* ================= Website URL discovery =================
- * Two-step flow: POST {root_url} -> discover/ returns the site's available
- * pages, user picks the ones to scrape. Step 2 (scraping the selected URLs)
- * is not wired to the backend yet, so "Add selected" is a UI-only action.
+ * Flow: POST {root_url} -> discover/ returns the site's available pages, the
+ * user picks the ones to import, then "Review selected pages" starts a web
+ * import session (POST web-imports/) and navigates to the review screen.
  */
 const DISCOVER_PANEL_HTML = `
   <div class="discover">
@@ -150,7 +149,7 @@ function renderDiscoverResults() {
       <span class="tiny muted">${picked.size ? `${picked.size} page${picked.size === 1 ? '' : 's'} ready to scrape` : 'Select at least one page to continue'}</span>
       <div class="flex" style="gap:10px">
         <button class="btn btn-secondary btn-sm" data-close>Cancel</button>
-        <button class="btn btn-primary btn-sm" id="disc-add" ${picked.size ? '' : 'disabled'}>Add ${picked.size || ''} page${picked.size === 1 ? '' : 's'}</button>
+        <button class="btn btn-primary btn-sm" id="disc-add" ${picked.size ? '' : 'disabled'}>Review ${picked.size || ''} page${picked.size === 1 ? '' : 's'}</button>
       </div>
     </div>`;
   const filter = w.querySelector('#disc-filter');
@@ -164,10 +163,31 @@ function renderDiscoverResults() {
   w.querySelector('#disc-rediscover').onclick = () => runDiscover();
   w.querySelectorAll('.page-pick input').forEach(c => c.onchange = () => { c.checked ? picked.add(c.dataset.url) : picked.delete(c.dataset.url); renderDiscoverResults(); });
   const add = w.querySelector('#disc-add');
-  add.onclick = () => {
-    toast(`Scraping ${picked.size} page${picked.size === 1 ? '' : 's'} — coming soon.`, 'info');
-  };
+  add.onclick = () => startWebImport(add);
   w.querySelectorAll('[data-close]').forEach(b => b.onclick = resetDiscoverPanel);
+}
+/**
+ * Step 2: submit the selected URLs, then hand off to the review screen. The
+ * import id is carried in the route so a refresh restores the session.
+ */
+async function startWebImport(btn) {
+  const urls = [...picked];
+  if (!urls.length) return;
+  const label = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = `<span class="spinner"></span> Starting…`;
+  try {
+    const { importId } = await startWebImportRequest({
+      urls,
+      createImport: (list) => apiFetch(ENDPOINTS.webImports(orgId, kbId), { method: 'POST', body: { urls: list } }),
+    });
+    toast(`Import started for ${urls.length} page${urls.length === 1 ? '' : 's'}`, 'success');
+    location.href = webImportUrl(kbId, importId);
+  } catch (e) {
+    btn.disabled = false;
+    btn.innerHTML = label;
+    toast(e.status === 403 ? 'Permission denied.' : (e.message || 'Could not start the import.'), 'error');
+  }
 }
 /** Back to the upload source, discarding any discovery in progress. */
 function resetDiscoverPanel() {
@@ -226,16 +246,20 @@ async function loadKb() {
   catch { const l = asList(await apiFetch(ENDPOINTS.kbs(orgId), { cacheTtl: 15000 }).catch(() => [])); kb = l.find(x => String(x.id) === String(kbId)) || { id: kbId, name: 'Knowledge Base' }; }
   return kb;
 }
-const isFinal = (d) => FINAL_DOC_STATUSES.includes(docStatus(d).toLowerCase());
+/** Polling stops at ready_for_review (open the editor) or a final state. */
+const isFinal = (d) => isDocPollTerminal(docStatus(d));
 function stopPoll(id) {
   const key = String(id);
   if (docTimers.has(key)) { clearTimeout(docTimers.get(key)); docTimers.delete(key); }
   inflight.delete(key);
 }
 function stopAllPolls() { [...docTimers.keys()].forEach(stopPoll); }
+/** Doc ids whose review modal has been auto-opened this session (don't re-open on later polls). */
+const reviewOpened = new Set();
 /**
  * Reusable per-document poller. Fetches GET documentDetail every POLL_MS
- * until the doc reaches a terminal state (completed/failed).
+ * until the doc reaches ready_for_review or a final state (ready/failed).
+ * On ready_for_review it stops polling and opens the review editor.
  * Safe: no duplicate loops, no overlap, survives re-renders, cleans up.
  */
 function pollDocumentStatus(id) {
@@ -253,7 +277,13 @@ function pollDocumentStatus(id) {
         if (i !== -1) docs[i] = { ...docs[i], ...fresh };
         else docs.push(fresh);
         renderDocs();
-        if (isFinal(fresh)) return; // terminal — stop polling
+        if (isFinal(fresh)) {
+          if (docStatusInfo(docStatus(fresh)).key === 'review' && canManage && !reviewOpened.has(key)) {
+            reviewOpened.add(key);
+            openDocReview(key); // extraction done — review before embedding
+          }
+          return; // terminal — stop polling
+        }
       }
     } catch {
       inflight.delete(key);
@@ -288,34 +318,45 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('pagehide', stopAllPolls);
 window.addEventListener('beforeunload', stopAllPolls);
 function fileIcon(fn = '') { const e = fn.split('.').pop().toLowerCase(); return e === 'pdf' ? '📕' : e === 'docx' ? '📘' : '📄'; }
-function badgeFor(s) {
-  const v = s.toLowerCase();
-  if (['completed', 'complete', 'done', 'ready', 'indexed', 'processed', 'success', 'succeeded'].includes(v)) return 'b-completed';
-  if (['failed', 'error', 'errored'].includes(v)) return 'b-failed';
-  if (['processing', 'ingesting', 'running', 'queued', 'in_progress'].includes(v)) return 'b-processing';
-  return 'b-pending';
-}
 function renderDocs() {
   const w = document.getElementById('docs');
   if (!w) return;
   if (!docs.length) { w.innerHTML = emptyState('📄', 'No documents yet', 'Upload PDFs, DOCX, MD or TXT. Documents are split using a recursive text splitter.', ''); return; }
   const hasPending = docs.some(d => !isFinal(d));
-  w.innerHTML = `<div class="table-wrap"><table><thead><tr><th>File</th><th>Status</th><th>Chunks</th><th>Uploaded</th><th></th></tr></thead><tbody>
+  const reviewDocs = docs.filter(d => docStatusInfo(docStatus(d)).key === 'review');
+  const reviewBanner = reviewDocs.length && canManage ? `<div class="alert alert-info flex between mt1" style="align-items:center;gap:12px" role="status">
+      <span>📄 <strong>${reviewDocs.length} document${reviewDocs.length === 1 ? '' : 's'} ready for review</strong> — check the extracted text, then confirm to start embedding.</span>
+      <button class="btn btn-primary btn-sm" id="docs-review-all">Review now</button>
+    </div>` : '';
+  w.innerHTML = `${reviewBanner}<div class="table-wrap"><table><thead><tr><th>File</th><th>Status</th><th>Chunks</th><th>Uploaded</th><th></th></tr></thead><tbody>
     ${docs.map(d => {
       const id = docId(d);
-      const failed = ['failed', 'error', 'errored'].includes(docStatus(d).toLowerCase());
+      const st = docStatusInfo(docStatus(d));
+      const failed = st.key === 'failed';
+      const needsReview = st.key === 'review';
       const err = failed ? docError(d) : '';
       const busy = retrying.has(String(id));
       const chunks = docChunks(d);
       const ingested = docIngestedAt(d);
-      return `<tr><td>${fileIcon(docName(d))} <strong>${escapeHtml(docName(d))}</strong><br><span class="tiny muted">${formatBytes(d.size_bytes || d.size)}${ingested ? ` · ingested ${escapeHtml(String(ingested))}` : ''}</span>${err ? `<br><span class="tiny" style="color:var(--danger)">Failed: ${escapeHtml(String(err))}</span>` : ''}</td>
-    <td><span class="badge ${badgeFor(docStatus(d))}">${escapeHtml(statusLabel(d))}</span></td>
+      const words = docWords(d);
+      const confirmed = docConfirmedAt(d);
+      // The badge itself is the primary "open the review" affordance.
+      const statusCell = needsReview && canManage
+        ? `<button class="badge ${st.badge} badge-link" data-review-doc="${id}" title="Open the review editor">${escapeHtml(statusLabel(d))} →</button>`
+        : `<span class="badge ${st.badge}">${escapeHtml(statusLabel(d))}</span>`;
+      return `<tr><td>${fileIcon(docName(d))} <strong>${escapeHtml(docName(d))}</strong><br><span class="tiny muted">${formatBytes(d.size_bytes || d.size)}${words ? ` · ${words.toLocaleString()} words` : ''}${confirmed ? ` · confirmed ${escapeHtml(timeAgo(confirmed))}` : ''}${ingested ? ` · ingested ${escapeHtml(String(ingested))}` : ''}</span>${err ? `<br><span class="tiny" style="color:var(--danger)">Failed: ${escapeHtml(String(err))}</span>` : ''}</td>
+    <td>${statusCell}</td>
     <td class="mono">${chunks ?? '—'}</td><td class="small" title="${escapeHtml(d.created_at || d.uploaded_at || '')}">${timeAgo(d.created_at || d.uploaded_at)}${d.uploaded_by ? `<br><span class="tiny muted">${escapeHtml(d.uploaded_by)}</span>` : ''}</td>
-    <td style="white-space:nowrap">${failed && canManage ? `<button class="btn btn-secondary btn-sm" data-retry-doc="${id}" ${busy ? 'disabled' : ''}>${busy ? 'Retrying…' : 'Retry'}</button> ` : ''}${canManage ? `<button class="btn btn-ghost btn-sm" data-rm="${id}">Delete</button>` : ''}</td></tr>`;
+    <td style="white-space:nowrap">${needsReview && canManage ? `<button class="btn btn-primary btn-sm" data-review-doc="${id}">Review</button> ` : ''}${failed && canManage ? `<button class="btn btn-secondary btn-sm" data-retry-doc="${id}" ${busy ? 'disabled' : ''}>${busy ? 'Retrying…' : 'Retry'}</button> ` : ''}${canManage ? `<button class="btn btn-ghost btn-sm" data-rm="${id}">Delete</button>` : ''}</td></tr>`;
     }).join('')}</tbody></table></div>
-    ${hasPending ? `<p class="tiny muted mt1">⏳ Checking ingestion status every few seconds… <button class="btn btn-ghost btn-sm" id="docs-refresh">Refresh now</button></p>` : ''}`;
+    ${hasPending ? `<p class="tiny muted mt1">⏳ Checking status every few seconds… <button class="btn btn-ghost btn-sm" id="docs-refresh">Refresh now</button></p>` : ''}`;
   const rf = w.querySelector('#docs-refresh');
   if (rf) rf.onclick = () => loadDocs(false);
+  w.querySelector('#docs-review-all')?.addEventListener('click', () => {
+    const first = reviewDocs[0];
+    if (first) openDocReview(docId(first));
+  });
+  w.querySelectorAll('[data-review-doc]').forEach(b => b.onclick = () => openDocReview(b.dataset.reviewDoc));
   w.querySelectorAll('[data-retry-doc]').forEach(b => b.onclick = () => retryDoc(b.dataset.retryDoc, b));
   w.querySelectorAll('[data-rm]').forEach(b => b.onclick = async () => {
     if (!await confirmDialog({ title: 'Delete document?', body: 'The file and its chunks will be removed from search.', confirmText: 'Delete' })) return;
@@ -344,11 +385,129 @@ async function retryDoc(id, btn) {
       : { status: 'pending', error_message: '' };
     if (i !== -1) docs[i] = { ...docs[i], ...next };
     renderDocs();
-    toast('Retry queued — watching ingestion…', 'success');
+    toast('Retry queued — watching status…', 'success');
     stopPoll(key);
     pollDocumentStatus(key); // resume polling after retry
-  } catch (e) { toast(e.message, 'error'); }
+  } catch (e) {
+    // 409: ready_for_review — "edit it, then confirm…" (retry re-runs nothing there).
+    toast(e.status === 403 ? 'Permission denied.' : (e.message || 'Retry failed.'), 'error');
+    if (e.status === 409) loadDocs(true); // refresh row so the Review button appears
+  }
   finally { retrying.delete(key); renderDocs(); }
+}
+/* ================= Document review (upload → ready_for_review) =================
+ * Uploaded files park in ready_for_review after extraction. The review modal
+ * fetches the extracted content, optionally PATCHes edits, then confirms
+ * (freezes edits) and starts embedding — two calls, like web import.
+ */
+function setDocLocal(id, patch) {
+  const i = docs.findIndex(d => String(docId(d)) === String(id));
+  if (i !== -1) docs[i] = { ...docs[i], ...patch };
+  renderDocs();
+}
+async function openDocReview(id) {
+  const key = String(id);
+  const doc = docs.find(d => String(docId(d)) === key);
+  const fname = doc ? docName(doc) : 'Document';
+  let state = { loading: true, content: '', original: '', words: 0, editable: true, extractError: '', saving: false, confirming: false, error: '', dirty: false };
+  const { el, close } = openModal(`
+    <div class="modal-head"><h3>Review document</h3><button class="icon-btn" data-close aria-label="Close">✕</button></div>
+    <div class="modal-body" id="dr-body"></div>
+    <div class="modal-foot" id="dr-foot"><button class="btn btn-secondary" data-close>Close</button></div>`, { wide: true });
+  const body = el.querySelector('#dr-body');
+  const foot = el.querySelector('#dr-foot');
+  const render = () => {
+    body.innerHTML = state.loading
+      ? `<div class="flex"><span class="spinner dark"></span> <span class="muted small">Loading extracted content…</span></div>`
+      : `<p class="small muted">Review the text extracted from <strong>${escapeHtml(fname)}</strong>. You can edit it before confirming — confirmation freezes the content and starts embedding.</p>
+      ${state.extractError ? `<div class="alert alert-warning mt1" role="alert">${escapeHtml(state.extractError)}</div>` : ''}
+      ${state.error ? `<div class="alert alert-danger mt1" role="alert">${escapeHtml(state.error)}</div>` : ''}
+      <div class="wi-editor mt2">
+        <div class="wi-editor-status" aria-live="polite">
+          ${state.editable ? '' : '<span class="badge b-completed">Confirmed — read-only</span>'}
+          ${state.dirty ? '<span class="badge b-warning">Unsaved changes</span>' : ''}
+          <span class="tiny muted">${state.words.toLocaleString()} words</span>
+        </div>
+        <label class="sr-only" for="dr-text">Extracted content</label>
+        <textarea id="dr-text" rows="18" spellcheck="false" ${state.editable && !state.saving && !state.confirming ? '' : 'disabled'}>${escapeHtml(state.content)}</textarea>
+      </div>`;
+    foot.innerHTML = state.editable
+      ? `<button class="btn btn-secondary" data-close ${state.saving || state.confirming ? 'disabled' : ''}>Close</button>
+         <button class="btn btn-secondary" id="dr-save" ${state.saving || state.confirming || !state.dirty ? 'disabled' : ''}>${state.saving ? '<span class="spinner"></span> Saving…' : 'Save'}</button>
+         <button class="btn btn-primary" id="dr-confirm" ${state.saving || state.confirming || state.dirty || state.loading ? 'disabled' : ''}>${state.confirming ? '<span class="spinner"></span> Starting…' : 'Confirm & start embedding'}</button>`
+      : `<button class="btn btn-secondary" data-close>Close</button>`;
+    foot.querySelectorAll('[data-close]').forEach(b => b.onclick = close);
+    el.querySelector('#dr-text')?.addEventListener('input', (e) => {
+      state.content = e.target.value;
+      state.dirty = state.content !== state.original;
+      const save = foot.querySelector('#dr-save'); if (save) save.disabled = state.saving || !state.dirty;
+      const conf = foot.querySelector('#dr-confirm'); if (conf) conf.disabled = state.saving || state.confirming || state.dirty;
+      const st = body.querySelector('.wi-editor-status');
+      if (st) st.innerHTML = `${state.editable ? '' : '<span class="badge b-completed">Confirmed — read-only</span>'}${state.dirty ? '<span class="badge b-warning">Unsaved changes</span>' : ''}<span class="tiny muted">${state.words.toLocaleString()} words</span>`;
+    });
+    foot.querySelector('#dr-save')?.addEventListener('click', saveContent);
+    foot.querySelector('#dr-confirm')?.addEventListener('click', confirmAndEmbed);
+  };
+  async function saveContent() {
+    if (state.saving || !state.dirty) return;
+    state.saving = true; state.error = ''; render();
+    try {
+      const res = await saveDocContent(apiFetch, ENDPOINTS.documentContent(orgId, kbId, key), state.content);
+      state.content = res.content; state.original = res.content;
+      state.words = res.word_count || state.words;
+      state.editable = res.editable !== false;
+      state.dirty = false;
+      setDocLocal(key, { word_count: state.words });
+      toast('Content saved', 'success');
+    } catch (e) {
+      // 400 blank/oversized · 409 already confirmed
+      state.error = e.status === 409
+        ? 'This document was already confirmed — the content is now read-only.'
+        : (e.message || 'Could not save the content.');
+      if (e.status === 409) { state.editable = false; state.dirty = false; }
+    } finally { state.saving = false; render(); }
+  }
+  async function confirmAndEmbed() {
+    if (state.confirming || state.dirty) return;
+    state.confirming = true; state.error = ''; render();
+    try {
+      const { confirmation, queued } = await confirmAndStartEmbedding({
+        confirm: () => apiFetch(ENDPOINTS.documentConfirm(orgId, kbId, key), { method: 'POST', body: {} }),
+        ingest: () => apiFetch(ENDPOINTS.documentIngest(orgId, kbId, key), { method: 'POST', body: {} }),
+      });
+      state.confirming = false;
+      setDocLocal(key, {
+        status: queued.status || 'pending',
+        chunk_count: queued.chunk_count ?? null,
+        confirmed_at: confirmation.confirmed_at,
+        word_count: confirmation.word_count || state.words,
+        error_message: '',
+      });
+      close();
+      toast(queued.already_processing ? 'Already embedding — watching status…' : 'Confirmed — embedding started…', 'success');
+      stopPoll(key);
+      if (!isFinal(docs.find(d => String(docId(d)) === key) || {})) pollDocumentStatus(key);
+    } catch (e) {
+      state.confirming = false;
+      // 409 on ingest = not confirmed yet; 409 on confirm = already confirmed elsewhere.
+      state.error = e.status === 409
+        ? (e.message || 'The server rejected this request — the document may already be confirmed or embedding.')
+        : (e.message || 'Could not start embedding. Your content is unchanged; try again.');
+      render();
+    }
+  }
+  render();
+  try {
+    const res = await requestDocContent(apiFetch, ENDPOINTS.documentContent(orgId, kbId, key));
+    // Editable only while the doc is still in review (not confirmed elsewhere).
+    const stillReview = !doc || docStatusInfo(docStatus(doc)).key === 'review';
+    state = { ...state, loading: false, content: res.content, original: res.original_content || res.content, words: res.word_count, editable: res.editable !== false && stillReview, extractError: res.error };
+    render();
+  } catch (e) {
+    state.loading = false;
+    state.error = e.status === 403 ? 'Permission denied.' : (e.message || 'Could not load the document content.');
+    render();
+  }
 }
 const uploads = new Map();
 function renderUploads() {
@@ -363,19 +522,21 @@ async function startUpload(file) {
   uploads.set(id, { name: file.name, p: 0, state: 'uploading', file, ctrl }); renderUploads();
   const fd = new FormData(); fd.append('file', file);
   try {
-    // Backend returns 202 Accepted — ingestion continues in Celery. Do NOT wait.
+    // Backend returns 202 Accepted — extraction runs server-side and the doc
+    // parks in ready_for_review (like web-import drafts). No embedding yet.
     const created = await uploadWithProgress(ENDPOINTS.ingest(orgId, kbId), fd, (p) => { const u = uploads.get(id); if (u) { u.p = p; renderUploads(); } }, ctrl.signal);
     uploads.get(id).state = 'done'; uploads.get(id).p = 100; renderUploads();
     setTimeout(() => { uploads.delete(id); renderUploads(); }, 2500);
     if (created && typeof created === 'object' && docId(created)) {
-      // Show the document immediately as pending/processing, then poll.
+      // Show the document immediately as pending/processing, then poll until ready_for_review.
       const optimistic = { status: 'pending', chunk_count: null, ...created };
       if (!docs.some(d => String(docId(d)) === String(docId(optimistic)))) docs.push(optimistic);
       renderDocs();
-      toast(`${file.name} uploaded — processing…`, 'success');
+      toast(`${file.name} uploaded — extracting text…`, 'success');
       if (!isFinal(optimistic)) pollDocumentStatus(docId(optimistic));
+      else if (docStatusInfo(docStatus(optimistic)).key === 'review' && canManage) openDocReview(docId(optimistic));
     } else {
-      toast(`${file.name} uploaded — processing…`, 'success');
+      toast(`${file.name} uploaded — extracting text…`, 'success');
       await loadDocs(true); // fallback: refresh list, polling resumes for pending docs
     }
   } catch (e) { const u = uploads.get(id); if (u) { u.state = 'failed'; renderUploads(); } toast(`${file.name}: ${e.message}`, 'error'); }
@@ -408,6 +569,7 @@ page.innerHTML = `
       </div>
       <div id="src-website" hidden>${DISCOVER_PANEL_HTML}</div>
     </div>` : `<div class="alert alert-info">You have read-only access. Only owners/admins can add data.</div>`}
+    <div id="web-imports" class="mt2" hidden></div>
     <div id="docs" class="mt2">${skeletonList(2)}</div>
   </div>
   <div id="tab-settings" ${tab !== 'settings' ? 'hidden' : ''}><div class="card"><h3>KB Settings</h3><p class="small muted">ID <span class="mono">${escapeHtml(String(kb.id))}</span> · created ${escapeHtml(kb.created_at || '—')}</p></div></div>`;
@@ -436,5 +598,80 @@ page.querySelectorAll('[data-source]').forEach(b => b.onclick = () => {
 });
 document.getElementById('root-url')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); runDiscover(); } });
 document.getElementById('discover-btn')?.addEventListener('click', runDiscover);
+/* ================= Past webpage imports (revisit / remove) =================
+ * Unconfirmed scrape sessions for this KB. Each can be reopened in the review
+ * screen; nothing here has been added to the knowledge base.
+ */
+let wiList = [];
+let wiTimer = null;
+let wiLoading = false;
+function stopWiPoll() { if (wiTimer) { clearTimeout(wiTimer); wiTimer = null; } }
+function renderWebImports() {
+  const w = document.getElementById('web-imports');
+  if (!w) return;
+  if (!wiList.length) { w.hidden = true; w.innerHTML = ''; stopWiPoll(); return; }
+  w.hidden = false;
+  const anyActive = wiList.some(s => !isSessionTerminal(s.status));
+  w.innerHTML = `<div class="card wi-imports">
+    <div class="wi-imports-head">
+      <div><h3>Webpage imports</h3><p class="tiny muted">Drafts awaiting review — not added to this knowledge base yet.</p></div>
+      <button class="btn btn-ghost btn-sm" id="wi-refresh">↻ Refresh</button>
+    </div>
+    <div class="wi-imports-list">
+      ${wiList.map(s => {
+        const prog = sessionProgress(s, []);
+        const info = sessionStatusInfo(s.status);
+        return `<div class="wi-import-row">
+          <div class="wi-import-main">
+            <div class="wi-import-top"><span class="badge ${info.badge}">${escapeHtml(info.label)}</span>
+              <strong>${prog.total} page${prog.total === 1 ? '' : 's'}</strong></div>
+            <div class="tiny muted">${escapeHtml(progressText(prog))}${prog.failed ? ` · ${prog.failed} failed` : ''} · created ${escapeHtml(timeAgo(s.created_at))}</div>
+          </div>
+          <div class="wi-import-actions">
+            <a class="btn btn-secondary btn-sm" href="${webImportUrl(kbId, s.id)}">Review</a>
+            ${canManage ? `<button class="btn btn-ghost btn-sm" data-remove-import="${escapeHtml(String(s.id))}">Remove</button>` : ''}
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+    ${anyActive ? `<p class="tiny muted mt1">⏳ Scraping in progress… this list updates automatically.</p>` : ''}
+  </div>`;
+  const rf = w.querySelector('#wi-refresh');
+  if (rf) rf.onclick = () => loadWebImports(false);
+  w.querySelectorAll('[data-remove-import]').forEach(b => b.onclick = () => removeWebImport(b.dataset.removeImport, b));
+  stopWiPoll();
+  if (anyActive) wiTimer = setTimeout(() => loadWebImports(true), POLL_MS);
+}
+async function loadWebImports(silent) {
+  if (wiLoading) return;
+  wiLoading = true;
+  try {
+    const res = await apiFetch(ENDPOINTS.webImports(orgId, kbId), { cacheTtl: 0 });
+    wiList = normalizeImportList(res);
+    renderWebImports();
+  } catch (e) {
+    if (!silent) toast(e.status === 403 ? 'Permission denied.' : e.message, 'error');
+    else stopWiPoll();
+  } finally { wiLoading = false; }
+}
+async function removeWebImport(id, btn) {
+  const s = wiList.find(x => String(x.id) === String(id));
+  const n = sessionProgress(s, []).total;
+  if (!await confirmDialog({ title: 'Remove this import?', body: `The scraped drafts${n ? ` for ${n} page${n === 1 ? '' : 's'}` : ''} will be discarded. This does not affect documents already in the knowledge base.`, confirmText: 'Remove' })) return;
+  if (btn) btn.disabled = true;
+  try {
+    await apiFetch(ENDPOINTS.webImportDetail(orgId, id), { method: 'DELETE' });
+    wiList = wiList.filter(x => String(x.id) !== String(id));
+    renderWebImports();
+    toast('Import removed', 'success');
+  } catch (e) {
+    if (btn) btn.disabled = false;
+    toast(e.status === 403 ? 'Permission denied.' : (e.message || 'Could not remove the import.'), 'error');
+  }
+}
+window.addEventListener('pagehide', stopWiPoll);
+window.addEventListener('beforeunload', stopWiPoll);
+document.addEventListener('visibilitychange', () => { if (document.hidden) stopWiPoll(); else if (wiList.some(s => !isSessionTerminal(s.status))) loadWebImports(true); });
 renderDiscoverIdle();
+loadWebImports(true);
 await loadDocs(true, kb);
