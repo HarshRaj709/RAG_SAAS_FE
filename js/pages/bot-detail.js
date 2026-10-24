@@ -23,10 +23,15 @@ const kbName = (id) => kbs.find(k => String(k.id) === String(id))?.name || Strin
 page.innerHTML = `
   <p><a href="bots.html">← Bots</a></p>
   <div class="page-head"><div><h2>${escapeHtml(bot.name)}</h2><p class="mono muted small">/${escapeHtml(bot.slug || '')} · created ${formatDate(bot.created_at)}</p></div>
-  <a class="btn btn-primary btn-sm" href="bot.html?id=${botId}&tab=playground">Open playground →</a></div>
+  <div class="flex"><button class="btn btn-secondary btn-sm" id="edit-bot-top">Edit bot</button><a class="btn btn-primary btn-sm" href="bot.html?id=${botId}&tab=playground">Open playground →</a></div></div>
   <div class="tabs" role="tablist">${['overview', 'integration', 'playground', 'usage'].map(t => `<button class="tab" data-tab="${t}" aria-selected="${tab === t}">${t[0].toUpperCase() + t.slice(1)}</button>`).join('')}</div>
   <div id="tc"></div>`;
 const tc = document.getElementById('tc');
+page.querySelector('#edit-bot-top').addEventListener('click', () => {
+  if (!canManage) { toast('Only owners and admins can edit bot settings.', 'error'); return; }
+  if (tab !== 'overview') switchTab('overview');
+  setTimeout(() => tc.querySelector('#edit-settings')?.click(), 0);
+});
 function switchTab(t) { tab = t; history.replaceState(null, '', `?id=${botId}&tab=${t}`); page.querySelectorAll('[data-tab]').forEach(x => x.setAttribute('aria-selected', x.dataset.tab === t)); draw(); }
 /** Read the whitelist (GET detail & list both include `allowed_domains`). Owner user-JWT. */
 function getDomains(b) {
@@ -56,7 +61,7 @@ function draw() {
     tc.innerHTML = `<div class="grid grid-2"><div class="card"><h3>Details</h3>
       <p class="small mt1">Endpoint</p><div class="code-block">POST ${escapeHtml(endpoint)} <button class="btn btn-secondary btn-sm copy-btn" data-c="${escapeHtml(endpoint)}">Copy</button></div>
       <div class="field mt2"><label>Linked knowledge bases</label><div class="flex" style="flex-wrap:wrap">${linked.map(x => `<span class="chip" title="${escapeHtml(kbIdOf(x))}">${escapeHtml(kbLabel(x))}</span>`).join('') || '<span class="muted small">None</span>'}</div></div>
-      ${canManage ? `<button class="btn btn-secondary btn-sm" id="edit-kb">Edit linked KBs</button>` : `<p class="tiny muted">🔒 Only owners/admins can edit.</p>`}</div>
+      ${canManage ? `<div class="flex"><button class="btn btn-secondary btn-sm" id="edit-settings">Edit bot settings</button><button class="btn btn-secondary btn-sm" id="edit-kb">Edit linked KBs</button></div>` : `<p class="tiny muted">🔒 Only owners/admins can edit.</p>`}</div>
       <div class="card"><h3>API key</h3><p class="small muted">Raw keys are shown once at creation. Paste yours in the Playground to test.</p>
       ${canManage ? `<button class="btn btn-secondary btn-sm mt1" id="regen">Regenerate key</button>` : ''}</div></div>
       <div class="card mt3"><h3>Allowed domains</h3>
@@ -77,6 +82,41 @@ function draw() {
       domList.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { draftDoms = draftDoms.filter(x => x !== b.dataset.rm); paintDoms(); });
     };
     paintDoms();
+    tc.querySelector('#edit-settings')?.addEventListener('click', () => {
+      const linkedIds = linked.map(kbIdOf);
+      const { el, close } = openModal(`<div class="modal-head"><h3>Edit bot</h3><button class="icon-btn" data-close>✕</button></div>
+        <div class="modal-body"><div class="field"><label for="bot-name">Name</label><input id="bot-name" value="${escapeHtml(bot.name || '')}" required></div>
+        <div class="field"><label for="bot-description">Description</label><textarea id="bot-description" rows="2">${escapeHtml(bot.description || '')}</textarea></div>
+        <div class="field"><label for="bot-prompt">System prompt</label><textarea id="bot-prompt" rows="5">${escapeHtml(bot.system_prompt || '')}</textarea></div>
+        <div class="grid grid-2"><div class="field"><label for="bot-temperature">Temperature (0–1)</label><input id="bot-temperature" type="number" min="0" max="1" step="0.1" value="${Number.isFinite(Number(bot.temperature)) ? Number(bot.temperature) : 0.2}"></div>
+        <div class="field"><label for="bot-tokens">Max tokens</label><input id="bot-tokens" type="number" min="1" max="4096" step="1" value="${Number.isFinite(Number(bot.max_tokens)) ? Number(bot.max_tokens) : 512}"></div></div>
+        <div class="field"><label for="bot-domains">Allowed domains</label><textarea id="bot-domains" rows="3" placeholder="mysite.com">${escapeHtml(getDomains(bot).join('\n'))}</textarea><div class="hint">One hostname per line. Wildcards are not supported.</div></div>
+        <div class="field"><label>Linked knowledge bases</label>${kbs.map(k => `<label class="kb-pick ${linkedIds.includes(String(k.id)) ? 'selected' : ''}"><input type="checkbox" name="bot-kb" value="${escapeHtml(k.id)}" ${linkedIds.includes(String(k.id)) ? 'checked' : ''}><span>${escapeHtml(k.name)}</span></label>`).join('') || '<p class="muted small">No knowledge bases available.</p>'}</div>
+        <label class="small" style="display:flex;gap:8px;align-items:center;margin-bottom:12px"><input id="bot-active" type="checkbox" ${bot.is_active !== false ? 'checked' : ''}> Active</label><div id="bot-edit-error" class="error" role="alert"></div></div>
+        <div class="modal-foot"><button class="btn btn-secondary" data-close>Cancel</button><button class="btn btn-primary" id="bot-save">Save changes</button></div>`, { wide: true });
+      el.querySelectorAll('[name="bot-kb"]').forEach(cb => cb.onchange = () => cb.closest('.kb-pick').classList.toggle('selected', cb.checked));
+      el.querySelector('#bot-save').onclick = async (e) => {
+        const btn = e.currentTarget, errBox = el.querySelector('#bot-edit-error');
+        const name = el.querySelector('#bot-name').value.trim();
+        const temperature = Number(el.querySelector('#bot-temperature').value), maxTokens = Number(el.querySelector('#bot-tokens').value);
+        const domainsRaw = el.querySelector('#bot-domains').value.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+        const domains = [...new Set(domainsRaw.map(normalizeDomain).filter(Boolean))];
+        const invalid = domainsRaw.filter(x => domainError(x));
+        if (!name) { errBox.textContent = 'Name is required.'; return; }
+        if (!Number.isFinite(temperature) || temperature < 0 || temperature > 1) { errBox.textContent = 'Temperature must be between 0 and 1.'; return; }
+        if (!Number.isInteger(maxTokens) || maxTokens < 1 || maxTokens > 4096) { errBox.textContent = 'Max tokens must be between 1 and 4096.'; return; }
+        if (invalid.length) { errBox.textContent = `Invalid domain: ${invalid[0]}`; return; }
+        btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Saving…'; errBox.textContent = '';
+        const payload = { name, description: el.querySelector('#bot-description').value.trim(), system_prompt: el.querySelector('#bot-prompt').value.trim(), temperature, max_tokens: maxTokens, is_active: el.querySelector('#bot-active').checked, [BOT_DOMAINS_FIELD]: domains, kb_ids: [...el.querySelectorAll('[name="bot-kb"]:checked')].map(cb => cb.value) };
+        try {
+          bot = await apiFetch(ENDPOINTS.botDetail(orgId, botId), { method: 'PATCH', body: payload });
+          close(); toast('Bot updated', 'success'); draw(); page.querySelector('h2').textContent = bot.name || name;
+        } catch (error) {
+          errBox.textContent = error?.fields ? Object.entries(error.fields).map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(', ') : value}`).join(' · ') : (error.message || 'Could not update bot');
+          btn.disabled = false; btn.textContent = 'Save changes';
+        }
+      };
+    });
     const domIn = tc.querySelector('#dom-in'), domErr = tc.querySelector('#dom-err');
     tc.querySelector('#dom-add')?.addEventListener('click', () => {
       const err = domainError(domIn.value);
