@@ -6,7 +6,7 @@ import { escapeHtml } from '../utils.js';
 export async function mountTopbar(preloaded) {
   const bar = document.getElementById('topbar');
   if (!bar) return;
-  const crumbs = { 'dashboard.html': 'Dashboard', 'knowledge-bases.html': 'Knowledge Bases', 'knowledge-base.html': 'Knowledge Base', 'web-import.html': 'Knowledge Base', 'bots.html': 'Bots', 'bot.html': 'Bot', 'members.html': 'Members', 'settings.html': 'Settings' };
+  const crumbs = { 'dashboard.html': 'Dashboard', 'knowledge-bases.html': 'Knowledge Bases', 'knowledge-base.html': 'Knowledge Base', 'web-import.html': 'Knowledge Base', 'bots.html': 'Bots', 'bot.html': 'Bot', 'usage.html': 'Usage', 'members.html': 'Members', 'settings.html': 'Settings' };
   const page = location.pathname.split('/').pop();
   // Prefer orgs already loaded by guard()/mountShell — zero extra requests.
   let orgs = preloaded?.orgs || [], orgId = preloaded?.orgId ?? store.getOrgId();

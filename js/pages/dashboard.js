@@ -89,7 +89,7 @@ async function main() {
     </div>
     <div class="grid grid-2 mt3">
       <div class="card"><h3>Getting started</h3><div class="mt2">${steps.map(([t, done, h]) => `<a href="${h}" class="check-item ${done ? 'done' : ''}" style="text-decoration:none;color:inherit"><span class="ck">${done ? '✓' : '○'}</span><span><strong>${t}</strong></span></a>`).join('')}</div></div>
-      <div class="card"><h3>Usage per bot key</h3><p class="muted small mt1">Detailed analytics are <span class="badge b-pending">Coming soon</span> — the backend does not expose usage yet.</p><div class="progress mt2"><div style="width:8%"></div></div></div>
+      <div class="card"><h3>Token usage</h3><p class="muted small mt1">Track token consumption, costs, requests, and usage by bot and kind.</p><a class="btn btn-secondary btn-sm mt2" href="usage.html">View usage →</a></div>
     </div>
     <div class="grid grid-2 mt3">
       <div class="card"><div class="flex between"><h3>Recent documents</h3><a href="knowledge-bases.html" class="small">View all</a></div>

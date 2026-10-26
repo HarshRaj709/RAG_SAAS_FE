@@ -7,10 +7,22 @@ import { toast, confirmDialog, skeletonList, emptyState, openModal, copyTextFall
 import { escapeHtml, copyText, qp, formatDate, normalizeDomain, isValidDomain } from '../utils.js';
 import { mountChat } from '../components/chat-widget.js';
 import { showKeyModal } from './bots.js';
+import {
+  defaultRange,
+  zeroFillDaily,
+  usageQueryParams,
+  formatNumber,
+  formatCost,
+  kindBreakdown,
+  hasUsage,
+  usageChartSvg,
+  classifyUsageError,
+} from './usage-controller.js';
 initTheme();
 await guard('bots.html');
 const { orgId, org } = await getOrgContext();
 const botId = qp('id');
+const usageRange = { ...defaultRange(), kind: 'all' };
 const page = document.getElementById('page');
 const role = currentRole(org);
 const canManage = role === 'owner' || role === 'admin';
@@ -181,6 +193,79 @@ function draw() {
     <div id="chat"></div></div>`;
     mountChat(tc.querySelector('#chat'), { url: API_BASE_URL + ENDPOINTS.botTestChat(orgId, botId), auth: 'jwt', starterQuestions: ['What documents do you know about?', 'Summarize the refund policy.', 'How do I get started?'] });
   }
-  if (tab === 'usage') tc.innerHTML = `<div class="card"><h3>Usage</h3><p class="muted">Per-key usage tracking is <span class="badge b-pending">Coming soon</span>.</p></div>`;
+  if (tab === 'usage') {
+    const uf = usageRange;
+    tc.innerHTML = `
+      <div class="card usage-filters-card">
+        <div class="usage-filters">
+          <div class="field"><label for="bu-from">From</label><input id="bu-from" type="date" value="${uf.from}"></div>
+          <div class="field"><label for="bu-to">To</label><input id="bu-to" type="date" value="${uf.to}"></div>
+          <div class="field"><label for="bu-kind">Kind</label><select id="bu-kind">
+            <option value="all"${uf.kind === 'all' ? ' selected' : ''}>All kinds</option>
+            <option value="chat"${uf.kind === 'chat' ? ' selected' : ''}>Chat</option>
+            <option value="embedding_ingest"${uf.kind === 'embedding_ingest' ? ' selected' : ''}>Document ingestion</option>
+          </select></div>
+        </div>
+        <div class="usage-filter-foot"><span class="tiny muted">Dates are UTC · daily buckets</span><span class="error-text small" id="bu-range-error"></span><span class="tiny muted" id="bu-status" aria-live="polite"></span></div>
+      </div>
+      <div id="bu-results" class="mt3"></div>`;
+    const buResults = tc.querySelector('#bu-results');
+    const buFrom = tc.querySelector('#bu-from');
+    const buTo = tc.querySelector('#bu-to');
+    const buKind = tc.querySelector('#bu-kind');
+    const buErr = tc.querySelector('#bu-range-error');
+    const buStatus = tc.querySelector('#bu-status');
+    let buSeq = 0;
+
+    const renderUsage = (data) => {
+      const periods = zeroFillDaily(data?.daily, uf.from, uf.to, 'day');
+      const kinds = kindBreakdown(data?.by_kind);
+      const empty = !hasUsage(data);
+      const kpis = [
+        ['🪙', 'Total tokens', formatNumber(data?.total_tokens)],
+        ['⬆️', 'Prompt tokens', formatNumber(data?.prompt_tokens)],
+        ['⬇️', 'Completion tokens', formatNumber(data?.completion_tokens)],
+        ['🧩', 'Embedding tokens', formatNumber(data?.embedding_tokens)],
+        ['📨', 'Requests', formatNumber(data?.requests)],
+        ['💵', 'Cost (USD)', formatCost(data?.cost_usd)],
+      ];
+      buResults.innerHTML = `
+        <div class="usage-kpis">${kpis.map(([ico, label, value]) => `<div class="card stat-card"><div class="stat-icon">${ico}</div><div><div class="stat-num">${value}</div><div class="stat-label">${label}</div></div></div>`).join('')}</div>
+        ${empty ? '<div class="alert alert-info mt3">No usage recorded for this bot in the selected range and kind.</div>' : ''}
+        <div class="card mt3"><h3>Daily tokens</h3><p class="small muted">Zero-filled for gaps. All dates UTC.</p><div class="usage-chart mt2">${usageChartSvg(periods, { granularity: 'day' }) || '<p class="muted small">No chart data.</p>'}</div></div>
+        <div class="card mt3"><h3>By kind</h3><p class="small muted">Only kinds with usage in this range are shown.</p>
+          ${kinds.length ? `<div class="usage-stack mt2" aria-hidden="true">${kinds.map(k => `<span class="k-${k.kind}" style="width:${(k.share * 100).toFixed(2)}%" title="${escapeHtml(k.label)}: ${formatNumber(k.totals.total_tokens)} tokens"></span>`).join('')}</div>
+          <div class="usage-legend mt2">${kinds.map(k => `<div class="usage-legend-row"><span class="usage-legend-dot k-${k.kind}"></span><span class="usage-legend-name">${escapeHtml(k.label)}</span><span class="mono">${formatNumber(k.totals.total_tokens)}</span><span class="tiny muted">${formatNumber(k.totals.requests)} req · ${formatCost(k.totals.cost_usd)}</span></div>`).join('')}</div>`
+          : '<p class="muted small mt1">No kind breakdown for this range.</p>'}
+        </div>`;
+    };
+
+    async function loadBotUsage() {
+      uf.from = buFrom.value; uf.to = buTo.value; uf.kind = buKind.value;
+      buErr.textContent = '';
+      if (!uf.from || !uf.to) { buErr.textContent = 'Choose both dates.'; return; }
+      if (uf.from > uf.to) { buErr.textContent = "'From' must be on or before 'To'."; return; }
+      const my = ++buSeq;
+      buStatus.textContent = 'Loading…';
+      try {
+        const q = usageQueryParams({ from: uf.from, to: uf.to, kind: uf.kind });
+        const data = await apiFetch(`${ENDPOINTS.botUsage(orgId, botId)}?${new URLSearchParams(q)}`, { cacheTtl: 15000 });
+        if (my !== buSeq) return;
+        renderUsage(data);
+        buStatus.textContent = '';
+      } catch (e) {
+        if (my !== buSeq) return;
+        buStatus.textContent = '';
+        const kind = classifyUsageError(e);
+        if (kind === 'unauthorized') return;
+        buResults.innerHTML = `<div class="alert ${kind === 'forbidden' ? 'alert-warning' : 'alert-danger'}">${escapeHtml(kind === 'forbidden' ? 'You do not have access to this bot’s usage.' : (e?.message || 'Could not load bot usage.'))}</div>`;
+      }
+    }
+
+    buFrom.addEventListener('change', loadBotUsage);
+    buTo.addEventListener('change', loadBotUsage);
+    buKind.addEventListener('change', loadBotUsage);
+    loadBotUsage();
+  }
 }
 draw();

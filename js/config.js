@@ -46,6 +46,11 @@ export const ENDPOINTS = {
   documentIngest: (orgId, kbId, docId) => `/api/knowledge_base/orgs/${orgId}/kbs/${kbId}/documents/${docId}/ingest/`, // POST {} -> 202 {status, chunk_count, already_processing}; 200 if already ready; 409 if not confirmed
   bots: (id) => `/api/chat/orgs/${id}/bots/`,
   botDetail: (orgId, botId) => `/api/chat/orgs/${orgId}/bots/${botId}/`,
+  // Token usage / billing (read-only, org-scoped). Query: from, to, bot?, kind?, granularity?.
+  usageSummary: (orgId) => `/api/organization/orgs/${orgId}/usage/summary/`,
+  usageByBot: (orgId) => `/api/organization/orgs/${orgId}/usage/by-bot/`,
+  usageDaily: (orgId) => `/api/organization/orgs/${orgId}/usage/daily/`,
+  botUsage: (orgId, botId) => `/api/organization/orgs/${orgId}/bots/${botId}/usage/`,
   regenerateKey: (orgId, botId) => `/api/chat/orgs/${orgId}/bots/${botId}/keys/rotate/`, // POST: rotates key, raw key returned once
   // Public chat — customer-facing, bot secret key in Authorization header.
   publicChat: (slug) => `/api/chat/bot/${slug}/chat/`, // TODO(verify) against Postman

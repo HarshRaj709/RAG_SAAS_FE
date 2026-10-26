@@ -226,3 +226,46 @@
   .wi-import-actions .btn{flex:1}
 }
 
+
+/* ---- Token usage dashboards ---- */
+.usage-filters-card{padding:18px 20px}
+.usage-filters{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end}
+.usage-filters .field{margin:0;min-width:150px;flex:0 1 auto}
+.usage-filters .field input,.usage-filters .field select{width:100%;padding:9px 12px}
+.usage-filter-foot{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)}
+.usage-filter-foot .error-text{margin-left:auto}
+.usage-gran{display:inline-flex;gap:4px;padding:3px;background:var(--surface-2);border:1px solid var(--border);border-radius:10px}
+.usage-gran .btn{box-shadow:none;border:none;background:transparent;color:var(--muted)}
+.usage-gran .btn[aria-pressed="true"]{background:var(--surface);color:var(--text);box-shadow:var(--shadow-sm)}
+.usage-kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:12px}
+.usage-kpis .stat-card{padding:16px;gap:11px;align-items:center}
+.usage-kpis .stat-icon{width:38px;height:38px;font-size:17px}
+.usage-kpis .stat-num{font-size:21px;line-height:1.2;overflow-wrap:anywhere}
+.usage-kpis .stat-label{font-size:12px}
+.usage-chart{position:relative}
+.usage-chart-svg{width:100%;height:auto;display:block;overflow:visible}
+.usage-chart .chart-grid{stroke:var(--border);stroke-width:1;shape-rendering:crispEdges}
+.usage-chart .chart-axis{fill:var(--muted);font-size:11px;font-family:var(--font-sans)}
+.usage-chart .chart-line{fill:none;stroke:var(--primary);stroke-width:2.5;stroke-linejoin:round;stroke-linecap:round}
+.usage-chart .chart-area{stroke:none}
+.usage-chart .chart-dot{fill:var(--surface);stroke:var(--primary);stroke-width:2}
+.usage-chart .chart-dot:hover{fill:var(--primary);r:5}
+.usage-stack{display:flex;height:14px;border-radius:99px;overflow:hidden;background:var(--surface-2);border:1px solid var(--border)}
+.usage-stack>span{height:100%;min-width:2px;transition:width .3s ease}
+.usage-stack .k-chat,.usage-legend-dot.k-chat{background:var(--primary)}
+.usage-stack .k-embedding_ingest,.usage-legend-dot.k-embedding_ingest{background:var(--primary-2)}
+.usage-stack .k-embedding_query,.usage-legend-dot.k-embedding_query{background:var(--info)}
+.usage-legend{display:flex;flex-direction:column;gap:8px}
+.usage-legend-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px}
+.usage-legend-dot{width:10px;height:10px;border-radius:3px;flex-shrink:0}
+.usage-legend-name{font-weight:600;min-width:140px}
+.usage-legend-row .mono{margin-left:auto}
+@media(max-width:1100px){.usage-kpis{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:700px){
+  .usage-kpis{grid-template-columns:repeat(2,1fr)}
+  .usage-filters .field{flex:1 1 140px}
+  .usage-filter-foot .error-text{margin-left:0;flex:1 1 100%}
+  .usage-legend-name{min-width:0;flex:1}
+  .usage-legend-row .mono{margin-left:0}
+}
+@media(max-width:460px){.usage-kpis{grid-template-columns:1fr 1fr}.usage-kpis .stat-card{padding:13px}.usage-kpis .stat-num{font-size:18px}}

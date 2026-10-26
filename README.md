@@ -46,7 +46,7 @@ CORS_ALLOWED_ORIGINS = ["http://127.0.0.1:5500", "http://localhost:5500"]
 
 ## Folder map
 
-- `index.html` landing; `login/signup/accept-invite.html` auth; `dashboard/members/settings.html` app; `knowledge-bases/-base.html`, `bots/bot.html`
+- `index.html` landing; `login/signup/accept-invite.html` auth; `dashboard/usage/members/settings.html` app; `knowledge-bases/-base.html`, `bots/bot.html`
 - `css/`: tokens, base, components, layout, pages
 - `js/`: config, api (fetch+refresh+upload progress), auth, state (theme/org/user), ui (toast/modal/confirm), router-guard, utils
 - `js/components/`: sidebar, topbar, org-switcher, chat-widget (playground)
@@ -89,9 +89,24 @@ are untouched.
 Out of scope for this screen: implementing the backend RAG pipeline, chunking,
 embedding, or vector-store behavior.
 
+### Token usage / billing
+
+`usage.html` is the org-scoped read-only usage dashboard: KPI cards, a zero-filled
+UTC daily/monthly chart, a `by_kind` breakdown, and a per-bot table. Filters
+(date range defaulting to the last 30 days, kind, bot, granularity) refetch from:
+
+- `GET /api/organization/orgs/<org>/usage/summary/`
+- `GET /api/organization/orgs/<org>/usage/by-bot/`
+- `GET /api/organization/orgs/<org>/usage/daily/?granularity=day|month`
+
+Each bot's **Usage** tab uses `GET /api/organization/orgs/<org>/bots/<bot>/usage/`
+for the same KPIs, daily chart, and kind breakdown. `js/pages/usage-controller.js`
+holds the pure date/zero-fill/format/chart logic and is unit-tested. `cost_usd`
+may be `null` and renders as `—`; sparse series are zero-filled for charts and
+`embedding_query` is handled defensively even though the backend does not emit it.
+
 ## Known backend gaps
 
-- Per-key usage tracking → "Coming soon" placeholder.
 - LLM settings (system prompt/temperature/max tokens) → disabled "Coming soon" in wizard.
 - Exact field names for signup/invites/regenerate-key may differ — see `TODO(verify)` in `config.js`.
 
